@@ -80,7 +80,7 @@ def read_table(data: bytes, filename: str) -> list[list[Any]]:
     return [r for r in csv.reader(io.StringIO(text), delimiter=delim) if any(c.strip() for c in r)]
 
 
-def _norm_header(h: Any) -> str:
+def _norm_header(h: Any) -> str:  # "tipo_persona" -> "tipopersona"
     s = unicodedata.normalize("NFD", str(h).strip().lower())
     return re.sub(r"[\s_]+", "", "".join(c for c in s if unicodedata.category(c) != "Mn"))
 
@@ -112,6 +112,8 @@ def normalize_rows(table: list[list[Any]]) -> tuple[list[dict], list[str]]:
         try:
             valor = parse_number(get(r, "valor"))
             debito, credito = parse_number(get(r, "debito")), parse_number(get(r, "credito"))
+            base_imp = parse_number(get(r, "baseimpuesto"))
+            pct_imp = parse_number(get(r, "porcentajeimpuesto"))
         except Exception:
             errors.append(f"Fila {n}: valor no numérico ({get(r, 'valor')}).")
             continue
@@ -122,6 +124,7 @@ def normalize_rows(table: list[list[Any]]) -> tuple[list[dict], list[str]]:
             codigocuenta=codigo, nombrecuenta=s("nombrecuenta"), descripcion=s("descripcion"),
             factura=s("factura"), identificacion=s("identificacion"), tercero=s("tercero"),
             valor=valor, debito=debito, credito=credito, fila=n,  # débito/crédito solo informativos
+            baseimpuesto=base_imp, porcentajeimpuesto=pct_imp, tipo_persona=s("tipopersona"),
         )
         m["key"] = f"{empresa}|{m['id']}" if m["id"] else f"{empresa}|h:{fingerprint(m)}"
         rows.append(m)
@@ -208,60 +211,121 @@ def calc_autorretencion(base: Decimal, porcentaje: Decimal | float | str) -> Dec
     return q2(base * Decimal(str(porcentaje)) / Decimal(100))
 
 
-# ---------------------------------------------------------------- tarifas
-def validar_tarifa(t: dict) -> list[str]:
-    e = []
-    if not str(t.get("empresa", "")).strip():
-        e.append("Seleccione la empresa.")
-    try:
-        p = Decimal(str(t.get("porcentaje")))
-        if not (0 <= p <= 100):
-            e.append("El porcentaje debe estar entre 0 y 100.")
-    except Exception:
-        e.append("El porcentaje es obligatorio.")
-    if not t.get("desde"):
-        e.append("La fecha inicial de vigencia es obligatoria.")
-    if t.get("desde") and t.get("hasta") and t["hasta"] < t["desde"]:
-        e.append("La fecha final no puede ser anterior a la inicial.")
-    return e
-
-
-def _se_superponen(a: dict, b: dict) -> bool:
-    return (not b.get("hasta") or a["desde"] <= b["hasta"]) and (not a.get("hasta") or b["desde"] <= a["hasta"])
-
-
-def buscar_solapes(tarifas: list[dict], t: dict) -> list[dict]:
-    if not t.get("activa", True):
-        return []
-    return [o for o in tarifas if o["id"] != t.get("id") and o["empresa"] == t["empresa"]
-            and o["activa"] and _se_superponen(o, t)]
+# ---------------------------------------------------------------- maestro de empresas
+def validar_empresa(e: dict, existentes: list[str] | None = None) -> list[str]:
+    errs = []
+    if not str(e.get("nombre", "")).strip():
+        errs.append("El nombre de la empresa es obligatorio.")
+    if existentes and str(e.get("nombre", "")).strip() in existentes:
+        errs.append(f"La empresa {e['nombre']} está repetida.")
+    t = e.get("tarifa")
+    if t in (None, "") or (isinstance(t, float) and t != t):
+        errs.append(f"{e.get('nombre') or 'Empresa'}: falta la tarifa de autorretención.")
+    else:
+        try:
+            if not (0 <= Decimal(str(t)) <= 100):
+                errs.append(f"{e.get('nombre')}: la tarifa debe estar entre 0 y 100.")
+        except Exception:
+            errs.append(f"{e.get('nombre')}: tarifa no numérica.")
+    return errs
 
 
 @dataclass
 class ResTarifa:
-    status: str  # ok | none | partial | ambiguous
-    tarifa: dict | None = None
-    candidatas: list[dict] = field(default_factory=list)
+    status: str  # ok | none | inactive
+    tarifa: Decimal | None = None
     msg: str = ""
 
 
-def resolver_tarifa(tarifas: list[dict], empresa: str, desde: str, hasta: str) -> ResTarifa:
-    """Solo hay cálculo (status 'ok') si UNA tarifa activa cubre todo el período."""
-    act = [t for t in tarifas if t["empresa"] == empresa and t["activa"]]
-    cubre = [t for t in act if t["desde"] <= desde and (not t.get("hasta") or t["hasta"] >= hasta)]
-    if len(cubre) == 1:
-        return ResTarifa("ok", cubre[0], cubre)
-    if len(cubre) > 1:
-        return ResTarifa("ambiguous", None, cubre,
-                         "Hay varias tarifas activas con vigencias superpuestas para este período. Corrija la configuración.")
-    parcial = [t for t in act if t["desde"] <= hasta and (not t.get("hasta") or t["hasta"] >= desde)]
-    if parcial:
-        return ResTarifa("partial", None, parcial,
-                         "Ninguna tarifa activa cubre todo el período seleccionado (solo parcialmente). "
-                         "Complete la configuración o ajuste el período.")
-    return ResTarifa("none", None, [],
-                     "No hay una tarifa de autorretención definida para esta empresa y período. "
-                     "Configúrela para calcular.")
+def resolver_tarifa(maestro: list[dict], empresa: str) -> ResTarifa:
+    """La tarifa sale del maestro de empresas. Sin tarifa (o empresa inactiva) no se calcula."""
+    e = next((x for x in maestro if x["nombre"] == empresa), None)
+    if e is None or e.get("tarifa") in (None, ""):
+        return ResTarifa("none", None, f"La empresa {empresa} no tiene tarifa de autorretención en el Maestro de empresas. "
+                                       "Configúrela para calcular.")
+    if not e.get("activa", True):
+        return ResTarifa("inactive", None, f"La empresa {empresa} está inactiva en el Maestro de empresas.")
+    return ResTarifa("ok", Decimal(str(e["tarifa"])))
+
+
+# ---------------------------------------------------------------- retenciones 2365 / 2367
+GRUPOS_RETENCION = {"2365": "Retención en la fuente", "2367": "Impuesto a las ventas retenido (IVA)"}
+
+
+def grupo_retencion(codigo: str) -> str | None:
+    c = str(codigo).strip()
+    return next((g for g in GRUPOS_RETENCION if c.startswith(g)), None)
+
+
+@dataclass
+class CuentaRet:
+    codigo: str
+    nombre: str
+    grupo: str
+    tipo: str                                   # practicada | autorretencion | pago
+    creditos: Decimal = Decimal(0)              # retención causada (movimientos con valor < 0), en magnitud
+    debitos: Decimal = Decimal(0)               # cierres, pagos, devoluciones (valor > 0), en magnitud
+    base: Decimal = Decimal(0)                  # suma de baseimpuesto de los movimientos de causación
+    tarifas: set = field(default_factory=set)
+    por_persona: dict = field(default_factory=dict)   # tipo_persona -> [base, retención]
+    movs: list[dict] = field(default_factory=list)
+    invertir: bool = True
+
+    @property
+    def neto(self) -> Decimal:
+        n = self.creditos - self.debitos
+        return n if self.invertir else -n
+
+    @property
+    def n(self) -> int:
+        return len(self.movs)
+
+
+def _tipo_cuenta(nombre: str) -> str:
+    u = nombre.upper()
+    if "AUTORRETEN" in u:
+        return "autorretencion"
+    if "PAGO" in u:
+        return "pago"
+    return "practicada"
+
+
+def build_retenciones(movs: Iterable[dict], invertir_signo: bool = True) -> list[CuentaRet]:
+    """Cuentas 2365 y 2367 del período. Causación = movimientos con valor < 0 (crédito); el resto son
+    cierres/pagos/devoluciones. La base y el % salen de baseimpuesto / porcentajeimpuesto del auxiliar."""
+    acc: dict[str, CuentaRet] = {}
+    for m in movs:
+        g = grupo_retencion(m["codigocuenta"])
+        if not g:
+            continue
+        c = acc.setdefault(m["codigocuenta"], CuentaRet(m["codigocuenta"], m["nombrecuenta"], g,
+                                                         _tipo_cuenta(m["nombrecuenta"]), invertir=invertir_signo))
+        c.movs.append(m)
+        v = m["valor"]
+        if v < 0:
+            c.creditos += -v
+            c.base += m.get("baseimpuesto", Decimal(0))
+            p = c.por_persona.setdefault(m.get("tipo_persona") or "Sin clasificar", [Decimal(0), Decimal(0)])
+            p[0] += m.get("baseimpuesto", Decimal(0))
+            p[1] += -v
+        elif v > 0:
+            c.debitos += v
+        if m.get("porcentajeimpuesto"):
+            c.tarifas.add(m["porcentajeimpuesto"].normalize())
+    return sorted(acc.values(), key=lambda c: c.codigo)
+
+
+def totales_retenciones(cuentas: list[CuentaRet]) -> dict:
+    """Totales de retenciones PRACTICADAS (excluye cuentas de autorretención y de pago) por grupo."""
+    out = {}
+    for g, nombre in GRUPOS_RETENCION.items():
+        cs = [c for c in cuentas if c.grupo == g and c.tipo == "practicada"]
+        out[g] = dict(nombre=nombre, base=sum((c.base for c in cs), Decimal(0)),
+                      creditos=sum((c.creditos for c in cs), Decimal(0)),
+                      debitos=sum((c.debitos for c in cs), Decimal(0)),
+                      neto=sum((c.neto for c in cs), Decimal(0)))
+    out["total"] = {k: sum((out[g][k] for g in GRUPOS_RETENCION), Decimal(0)) for k in ("base", "creditos", "debitos", "neto")}
+    return out
 
 
 # ---------------------------------------------------------------- controles
@@ -270,7 +334,8 @@ def fmt(n: Decimal | float, dec: int = 2) -> str:
     return s.replace(",", "X").replace(".", ",").replace("X", ".")
 
 
-def ejecutar_controles(movs_periodo: list[dict], base: Base, tr: ResTarifa, total_movs: int, claves_unicas: int) -> list[dict]:
+def ejecutar_controles(movs_periodo: list[dict], base: Base, tr: ResTarifa, total_movs: int, claves_unicas: int,
+                       retenciones: list[CuentaRet] | None = None, auto: Decimal | None = None) -> list[dict]:
     out = []
 
     def add(titulo, ok, detalle, nivel="error"):
@@ -286,13 +351,21 @@ def ejecutar_controles(movs_periodo: list[dict], base: Base, tr: ResTarifa, tota
     add("Cuentas con saldo negativo revisadas", not neg,
         f"{len(neg)} cuenta(s) reducen la base en {fmt(abs(base.efecto_negativas))}. Base sin ellas: {fmt(base.base_sin_negativas)}."
         if neg else "Ninguna cuenta de ingresos con saldo negativo.", "warn")
-    add("Tarifa vigente aplicada al período", tr.status == "ok",
-        f"{tr.tarifa['porcentaje']}% — vigencia {tr.tarifa['desde']} a {tr.tarifa.get('hasta') or 'sin fecha final'}."
-        if tr.status == "ok" else tr.msg)
+    add("Tarifa tomada del Maestro de empresas", tr.status == "ok",
+        f"Tarifa de autorretención: {tr.tarifa}%." if tr.status == "ok" else tr.msg)
     add("Hay movimientos de la empresa en el período", bool(movs_periodo),
         f"{len(movs_periodo)} movimiento(s) en el rango." if movs_periodo else "No hay movimientos en el rango elegido.")
     add("Sin movimientos duplicados", total_movs == claves_unicas,
         f"{total_movs} movimiento(s) únicos almacenados (clave: empresa + id del auxiliar).")
     add("Base rastreable hasta los movimientos originales", True,
         "Cada cuenta enlaza a sus movimientos (fila del archivo e id del auxiliar).")
+    ret = retenciones or []
+    add("Retenciones 2365 / 2367 incluidas en el informe", bool(ret),
+        f"{len(ret)} cuenta(s) de retención en el período." if ret else
+        "No hay movimientos en cuentas 2365 ni 2367 para la empresa y el período.", "warn")
+    contab = sum((c.creditos for c in ret if c.tipo == "autorretencion"), Decimal(0))
+    if auto is not None and contab:
+        dif = contab - auto
+        add("Autorretención contabilizada (cuenta 2365 'AUTORRETENCION') vs. calculada", abs(dif) < Decimal("1"),
+            f"Contabilizada: {fmt(contab)} · Calculada: {fmt(auto)} · Diferencia: {fmt(dif)}.", "warn")
     return out
