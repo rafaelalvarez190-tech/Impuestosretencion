@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Autorretención sobre ingresos</title>
+<meta name="description" content="Liquidación preliminar de autorretención a partir del auxiliar contable (cuentas 4).">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 16 16%27%3E%3Crect width=%2716%27 height=%2716%27 rx=%273%27 fill=%27%230b5fff%27/%3E%3Ctext x=%278%27 y=%2712%27 font-size=%2711%27 text-anchor=%27middle%27 fill=%27white%27%3E%25%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+<header class="top">
+  <div>
+    <h1>Autorretención sobre ingresos</h1>
+    <p class="sub">Cuentas contables clase 4 · columna <code>valor</code> del auxiliar</p>
+  </div>
+  <nav class="tabs" role="tablist">
+    <button class="tab active" data-tab="datos" role="tab">1. Auxiliar</button>
+    <button class="tab" data-tab="config" role="tab">2. Configuración</button>
+    <button class="tab" data-tab="liq" role="tab">3. Liquidación</button>
+  </nav>
+</header>
+
+<div class="notice">Liquidación <strong>preliminar sujeta a revisión</strong>. La parametrización de la tarifa no sustituye la validación de las reglas tributarias aplicables a la empresa y al período.</div>
+
+<main>
+<!-- ============ 1. DATOS ============ -->
+<section id="tab-datos" class="panel active">
+  <div class="card">
+    <h2>Cargar auxiliar contable</h2>
+    <label class="drop" id="drop">
+      <input type="file" id="file" accept=".csv,.xlsx,.xls" hidden multiple>
+      <strong>Arrastre el auxiliar aquí o haga clic para elegirlo</strong>
+      <span>CSV o Excel con columnas: empresa, fecha, codigocuenta, nombrecuenta, valor (id, tercero, descripcion… opcionales)</span>
+    </label>
+    <div id="loadResult"></div>
+    <p class="hint">Volver a cargar el mismo archivo (o uno que lo contenga) no duplica movimientos: se identifican por <em>empresa + id</em> del auxiliar.</p>
+  </div>
+  <div class="card">
+    <div class="row between"><h2>Movimientos almacenados</h2><button class="btn danger" id="btnClear">Borrar todos los movimientos</button></div>
+    <div id="inventory"></div>
+  </div>
+</section>
+
+<!-- ============ 2. CONFIG ============ -->
+<section id="tab-config" class="panel">
+  <div class="card">
+    <div class="row between">
+      <h2>Tarifas de autorretención</h2>
+      <div class="row">
+        <span id="lockState" class="pill"></span>
+        <button class="btn" id="btnUnlock">Desbloquear edición</button>
+        <button class="btn ghost" id="btnExportCfg">Exportar copia</button>
+        <label class="btn ghost">Importar copia<input type="file" id="importCfg" accept=".json" hidden></label>
+      </div>
+    </div>
+    <p class="hint">El porcentaje no está en el código: lo define el usuario autorizado por empresa y vigencia. La clave (PIN) solo protege la edición en este navegador; no es un control de seguridad del servidor.</p>
+    <form id="tForm" class="grid" autocomplete="off">
+      <input type="hidden" id="tId">
+      <label>Empresa<input id="tEmpresa" list="empresasList" required><datalist id="empresasList"></datalist></label>
+      <label>Porcentaje (%)<input id="tPct" type="number" step="0.0001" min="0" max="100" required></label>
+      <label>Vigente desde<input id="tDesde" type="date" required></label>
+      <label>Vigente hasta <small>(opcional)</small><input id="tHasta" type="date"></label>
+      <label>Estado<select id="tActiva"><option value="1">Activa</option><option value="0">Inactiva</option></select></label>
+      <label>Referencia normativa <small>(opcional)</small><input id="tRef" placeholder="p. ej. Decreto 2201 de 2016, art. 1.2.6.6"></label>
+      <label class="span2">Observaciones <small>(opcional)</small><input id="tObs"></label>
+      <div class="span2 row"><button class="btn primary" type="submit" id="tSave">Guardar tarifa</button><button class="btn ghost" type="button" id="tCancel">Limpiar</button></div>
+    </form>
+    <div id="tMsg"></div>
+  </div>
+  <div class="card"><div id="tTable"></div></div>
+</section>
+
+<!-- ============ 3. LIQUIDACION ============ -->
+<section id="tab-liq" class="panel">
+  <div class="card">
+    <div class="row filters">
+      <label>Empresa<select id="fEmpresa"></select></label>
+      <label>Período<select id="fMes"></select></label>
+      <label>Desde<input type="date" id="fDesde"></label>
+      <label>Hasta<input type="date" id="fHasta"></label>
+      <label class="chk"><input type="checkbox" id="fInvert" checked> Presentar ingresos en positivo (invertir signo crédito)</label>
+    </div>
+  </div>
+  <div id="liqAlert"></div>
+  <div class="kpis" id="kpis"></div>
+  <div class="card">
+    <div class="row between"><h2>Informe de autorretención</h2><button class="btn primary" id="btnExport">Exportar a Excel</button></div>
+    <div id="reportHead" class="hint"></div>
+    <div class="tablewrap"><table id="tblCuentas"></table></div>
+  </div>
+  <div class="card" id="negCard"></div>
+  <div class="card"><h2>Controles y validaciones</h2><div id="checks"></div></div>
+</section>
+</main>
+
+<dialog id="dlg"><form method="dialog" id="dlgForm"><div id="dlgBody"></div></form></dialog>
+
+<footer>Procesamiento 100&nbsp;% en su navegador · los datos no salen de su equipo.</footer>
+
+<script src="vendor/xlsx.full.min.js"></script>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
