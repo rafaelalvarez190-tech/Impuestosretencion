@@ -1,4 +1,4 @@
-"""Autorretención sobre ingresos — app Streamlit.  Ejecutar:  streamlit run app.py"""
+"""Retencion y/o autorretención sobre ingresos — app Streamlit.  Ejecutar:  streamlit run app.py"""
 from datetime import date, timedelta
 from decimal import Decimal
 
