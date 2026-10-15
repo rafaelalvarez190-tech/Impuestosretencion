@@ -11,7 +11,7 @@ from excel_iva import exportar_iva
 
 M = "iva"
 STEPS = ["1. Cargar auxiliar de IVA", "2. Liquidación de IVA"]
-TIPO = {"generado": "IVA generado", "descontable": "IVA descontable", "otro": "Otro"}
+TIPO = core.TIPOS_IVA
 
 
 def _tarifa_txt(c) -> str:
@@ -111,7 +111,7 @@ def render() -> None:
     m_todos = core.filtrar(todos, empresa, desde.isoformat(), hasta.isoformat())
     movs, excluidos = core.separar_excluidos(m_todos, nits)          # solo `movs` entra al cálculo
     ingresos = core.build_base(movs, invertir)                        # clase 4: neto por cuenta
-    iva = core.build_iva(movs, invertir)                              # cuentas 2408
+    iva = core.build_iva(movs)                              # cuentas 2408
     t = core.totales_iva(iva)
     reteiva = core.build_reteiva(movs)                                # cuentas 135517 (IVA que le retienen)
     rt = core.totales_reteiva(reteiva)
@@ -119,8 +119,8 @@ def render() -> None:
 
     k1, k2, k3, k4, k5 = st.columns(5)
     k1.metric("Total ingresos (clase 4, neto)", fmt(ingresos.base), f"{len(ingresos.cuentas)} cuentas", delta_color="off")
-    k2.metric("IVA generado (2408)", fmt(liq["generado"]), "créditos", delta_color="off")
-    k3.metric("Descontable / devoluciones (−)", fmt(liq["descontable"]), "débitos 2408", delta_color="off")
+    k2.metric("IVA generado neto", fmt(liq["generado_neto"]), "generado − devoluciones en ventas", delta_color="off")
+    k3.metric("IVA descontable neto (−)", fmt(liq["descontable_neto"]), "descontable − devoluciones en compras", delta_color="off")
     k4.metric("IVA retenido (135517) (−)", fmt(liq["retenido"]), "retenciones que le aplican", delta_color="off")
     k5.metric("IVA por pagar", fmt(liq["por_pagar"]), "generado − descontable − retenido", delta_color="off")
     st.caption(f"**Empresa:** {empresa} · **Período:** {desde} a {hasta} · Liquidación preliminar sujeta a revisión.")
@@ -145,33 +145,42 @@ def render() -> None:
         st.info("No hay cuentas de clase 4 en el período.")
 
     # ---- 2408
-    st.subheader("IVA (cuentas 2408) — clasificación")
-    st.caption("IVA generado = movimientos crédito (`valor` negativo). Descontable / devoluciones / débitos = movimientos débito (se muestran en negativo y restan). "
-               "Base y tarifa vienen de `baseimpuesto` y `porcentajeimpuesto` del auxiliar.")
+    st.subheader("IVA (cuentas 2408) — clasificación por nombre de cuenta")
+    st.caption("La clasificación sale del **nombre** de la cuenta: «devolución» + «compras» = devolución en compras; «devolución» + «ventas» = devolución en ventas "
+               "(cuentas independientes); «descontable» = IVA descontable; «generado» = IVA generado. El neto se muestra en la naturaleza de cada cuenta "
+               "(generado y devolución en compras: crédito; descontable y devolución en ventas: débito).")
     if iva:
-        z = (-1 if invertir else 1)
-        filas = [{"Código": c.codigo, "Cuenta": c.nombre, "Clasificación": TIPO[c.tipo], "Tarifa %": _tarifa_txt(c),
-                  "Base (créditos)": float(c.base_cred), "IVA generado": float(c.generado), "Base (débitos)": float(c.base_deb),
-                  "Débitos (−)": -float(c.debitos), "Neto": float(c.neto), "Mov.": c.n} for c in iva]
-        filas.append({"Código": "TOTAL", "Cuenta": "Total IVA 2408", "Clasificación": "", "Tarifa %": "",
-                      "Base (créditos)": float(t["base_cred"]), "IVA generado": float(t["generado"]), "Base (débitos)": float(t["base_deb"]),
-                      "Débitos (−)": -float(t["debitos"]), "Neto": float(t["generado"] - t["debitos"]), "Mov.": None})
-        fm = {k: "{:,.2f}" for k in ["Base (créditos)", "IVA generado", "Base (débitos)", "Débitos (−)", "Neto"]}
+        fm = {k: "{:,.2f}" for k in ["Base", "Créditos", "Débitos", "Neto (naturaleza)"]}
+        bold = lambda r: ["font-weight:700; background-color:#eef2f7; color:#1c2430" if str(r.iloc[0]).startswith("TOTAL") else "" for _ in r]  # noqa: E731
+        orden = ["generado", "dev_ventas", "descontable", "dev_compras", "dev_sin_clasificar", "otro"]
+        filas = []
+        for tp in orden:
+            grp = [c for c in iva if c.tipo == tp]
+            for c in grp:
+                filas.append({"Código": c.codigo, "Cuenta": c.nombre, "Clasificación": TIPO[c.tipo], "Tarifa %": _tarifa_txt(c),
+                              "Base": float(c.base_deb if tp in core.NATURALEZA_DEBITO else c.base_cred), "Créditos": float(c.creditos),
+                              "Débitos": float(c.debitos), "Neto (naturaleza)": float(c.natural), "Mov.": c.n})
+            if grp:
+                filas.append({"Código": f"TOTAL {TIPO[tp]}", "Cuenta": "", "Clasificación": "", "Tarifa %": "",
+                              "Base": float(sum(c.base_deb if tp in core.NATURALEZA_DEBITO else c.base_cred for c in grp)),
+                              "Créditos": float(sum(c.creditos for c in grp)), "Débitos": float(sum(c.debitos for c in grp)),
+                              "Neto (naturaleza)": float(sum(c.natural for c in grp)), "Mov.": None})
         st.markdown("**Por cuenta**")
-        st.dataframe(pd.DataFrame(filas).style.format(fm, na_rep="")
-                     .apply(lambda r: ["font-weight:700; background-color:#eef2f7; color:#1c2430" if r["Código"] == "TOTAL" else "" for _ in r], axis=1),
-                     hide_index=True, width="stretch")
-        st.markdown("**Por tarifa**")
-        pt = [{"Tarifa %": f"{r['tarifa']:f}" if r["tarifa"] != core.SIN_TARIFA else r["tarifa"], "Base (créditos)": float(r["base_cred"]),
-               "IVA generado": float(r["generado"]), "Base (débitos)": float(r["base_deb"]), "Débitos (−)": -float(r["debitos"]),
-               "Neto": float(r["neto"])} for r in core.iva_por_tarifa(iva)]
-        pt.append({"Tarifa %": "TOTAL", "Base (créditos)": float(t["base_cred"]), "IVA generado": float(t["generado"]),
-                   "Base (débitos)": float(t["base_deb"]), "Débitos (−)": -float(t["debitos"]), "Neto": float(t["generado"] - t["debitos"])})
-        st.dataframe(pd.DataFrame(pt).style.format(fm)
-                     .apply(lambda r: ["font-weight:700; background-color:#eef2f7; color:#1c2430" if r["Tarifa %"] == "TOTAL" else "" for _ in r], axis=1),
+        st.dataframe(pd.DataFrame(filas).style.format(fm, na_rep="").apply(bold, axis=1), hide_index=True, width="stretch")
+        st.markdown("**Por tarifa** (efecto sobre el IVA por pagar: generado y devoluciones en compras suman; descontable y devoluciones en ventas restan)")
+        z = lambda v: float(v)  # noqa: E731
+        pt = [{"Tarifa %": f"{r['tarifa']:f}" if r["tarifa"] != core.SIN_TARIFA else r["tarifa"], "Base generado": z(r["base_gen"]),
+               "IVA generado": z(r["generado"]), "Dev. ventas (−)": -z(r["dev_ventas"]), "Base descontable": z(r["base_des"]),
+               "IVA descontable (−)": -z(r["descontable"]), "Dev. compras (+)": z(r["dev_compras"]), "Otros": z(r["otros"]),
+               "Neto": z(r["neto"])} for r in core.iva_por_tarifa(iva)]
+        pt.append({"Tarifa %": "TOTAL", "Base generado": sum(r["Base generado"] for r in pt), "IVA generado": sum(r["IVA generado"] for r in pt),
+                   "Dev. ventas (−)": sum(r["Dev. ventas (−)"] for r in pt), "Base descontable": sum(r["Base descontable"] for r in pt),
+                   "IVA descontable (−)": sum(r["IVA descontable (−)"] for r in pt), "Dev. compras (+)": sum(r["Dev. compras (+)"] for r in pt),
+                   "Otros": sum(r["Otros"] for r in pt), "Neto": sum(r["Neto"] for r in pt)})
+        st.dataframe(pd.DataFrame(pt).style.format({k: "{:,.2f}" for k in pt[0] if k != "Tarifa %"}).apply(bold, axis=1),
                      hide_index=True, width="stretch")
         for c in iva:
-            with st.expander(f"{c.codigo} · {c.nombre} — {c.n} movimientos"):
+            with st.expander(f"{c.codigo} · {c.nombre} ({TIPO[c.tipo]}) — {c.n} movimientos"):
                 st.dataframe(pd.DataFrame([{"Fila": m["fila"], "Id": m["id"], "Fecha": m["fecha"],
                                             "Doc.": f"{m['tipodocumento']} {m['nrodocumento']}".strip(), "Tercero": m["tercero"],
                                             "Descripción": m["descripcion"], "Base": float(m.get("baseimpuesto", 0)),
@@ -206,8 +215,11 @@ def render() -> None:
     # ---- liquidación
     st.subheader("Liquidación del IVA (preliminar)")
     liq_df = pd.DataFrame([
-        {"Concepto": "IVA generado (2408, créditos)", "Valor": float(liq["generado"])},
-        {"Concepto": "(−) IVA descontable / devoluciones / otros débitos (2408)", "Valor": float(liq["descontable"])},
+        {"Concepto": "IVA generado (2408)", "Valor": float(liq["generado"])},
+        {"Concepto": "(−) Devoluciones en ventas (2408)", "Valor": float(liq["dev_ventas"])},
+        {"Concepto": "(−) IVA descontable (2408)", "Valor": float(liq["descontable"])},
+        {"Concepto": "(+) Devoluciones en compras (2408)", "Valor": float(liq["dev_compras"])},
+        {"Concepto": "(±) Otras cuentas 2408 sin clasificar", "Valor": float(liq["otros"])},
         {"Concepto": "= IVA neto 2408", "Valor": float(liq["neto_2408"])},
         {"Concepto": "(−) IVA retenido (135517)", "Valor": float(liq["retenido"])},
         {"Concepto": "= IVA POR PAGAR", "Valor": float(liq["por_pagar"])},

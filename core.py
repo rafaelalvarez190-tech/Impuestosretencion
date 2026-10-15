@@ -405,16 +405,38 @@ def ejecutar_controles(movs_periodo: list[dict], base: Base, tr: ResTarifa, tota
     return out
 
 
-# ================================================================= MÓDULO IVA (cuenta 2408 + clase 4)
+# ================================================================= MÓDULO IVA (cuenta 2408 + 135517 + clase 4)
 PREFIJO_IVA = "2408"
+SIN_TARIFA = "Sin tarifa"
+
+# Clasificación de las cuentas 2408 según el NOMBRE de la cuenta (la devolución tiene prioridad):
+#   dev_ventas  → "…devolución…ventas…"   (naturaleza débito: reduce el IVA generado)
+#   dev_compras → "…devolución…compras…"  (naturaleza crédito: reduce el IVA descontable)
+#   descontable → "…descontable…"         (naturaleza débito)
+#   generado    → "…generado…"            (naturaleza crédito)
+#   otro / dev_sin_clasificar             (naturaleza crédito; se muestran aparte y se advierte)
+NATURALEZA_DEBITO = {"descontable", "dev_ventas"}
+TIPOS_IVA = {"generado": "IVA generado", "dev_ventas": "Devolución en ventas", "descontable": "IVA descontable",
+             "dev_compras": "Devolución en compras", "dev_sin_clasificar": "Devolución sin clasificar (¿compras o ventas?)",
+             "otro": "Otro"}
 
 
 def es_cuenta_iva(codigo: str) -> bool:
     return str(codigo).strip().startswith(PREFIJO_IVA)
 
 
-def _tipo_iva(nombre: str) -> str:
-    u = nombre.upper()
+def _sin_acentos(s: str) -> str:
+    return "".join(ch for ch in unicodedata.normalize("NFD", s) if unicodedata.category(ch) != "Mn")
+
+
+def tipo_iva(nombre: str) -> str:
+    u = _sin_acentos(nombre).upper()
+    if "DEVOL" in u:
+        if "COMPRA" in u:
+            return "dev_compras"
+        if "VENTA" in u:
+            return "dev_ventas"
+        return "dev_sin_clasificar"
     if "DESCONT" in u:
         return "descontable"
     if "GENERAD" in u:
@@ -422,71 +444,85 @@ def _tipo_iva(nombre: str) -> str:
     return "otro"
 
 
-SIN_TARIFA = "Sin tarifa"
-
-
 @dataclass
 class CuentaIVA:
     codigo: str
     nombre: str
-    tipo: str                                   # generado | descontable | otro (según el nombre de la cuenta)
-    generado: Decimal = Decimal(0)              # créditos (valor < 0): IVA causado
-    debitos: Decimal = Decimal(0)               # débitos (valor > 0): IVA descontable, devoluciones, ajustes
-    base_cred: Decimal = Decimal(0)             # baseimpuesto de los créditos
-    base_deb: Decimal = Decimal(0)              # baseimpuesto de los débitos
-    por_tarifa: dict = field(default_factory=dict)   # tarifa -> [base_cred, generado, base_deb, débitos]
+    tipo: str                                   # ver TIPOS_IVA
+    creditos: Decimal = Decimal(0)              # movimientos con valor < 0
+    debitos: Decimal = Decimal(0)               # movimientos con valor > 0
+    base_cred: Decimal = Decimal(0)
+    base_deb: Decimal = Decimal(0)
+    por_tarifa: dict = field(default_factory=dict)   # tarifa -> [base_cred, créditos, base_deb, débitos]
     movs: list[dict] = field(default_factory=list)
-    invertir: bool = True
 
     @property
-    def neto(self) -> Decimal:
-        """IVA neto de la cuenta (generado − débitos). Con invertir=False se presenta con el signo del auxiliar."""
-        n = self.generado - self.debitos
-        return n if self.invertir else -n
+    def natural(self) -> Decimal:
+        """Valor neto en la naturaleza de la cuenta (positivo = comportamiento normal)."""
+        return (self.debitos - self.creditos) if self.tipo in NATURALEZA_DEBITO else (self.creditos - self.debitos)
 
     @property
     def n(self) -> int:
         return len(self.movs)
 
 
-def build_iva(movs: Iterable[dict], invertir_signo: bool = True) -> list[CuentaIVA]:
-    """Cuentas 2408 del período: causado (créditos), débitos y neto, y clasificación por tarifa (porcentajeimpuesto)."""
+def build_iva(movs: Iterable[dict]) -> list[CuentaIVA]:
     acc: dict[str, CuentaIVA] = {}
     for m in movs:
         if not es_cuenta_iva(m["codigocuenta"]):
             continue
-        c = acc.setdefault(m["codigocuenta"], CuentaIVA(m["codigocuenta"], m["nombrecuenta"], _tipo_iva(m["nombrecuenta"]),
-                                                          invertir=invertir_signo))
+        c = acc.setdefault(m["codigocuenta"], CuentaIVA(m["codigocuenta"], m["nombrecuenta"], tipo_iva(m["nombrecuenta"])))
         c.movs.append(m)
         v, base = m["valor"], m.get("baseimpuesto", Decimal(0))
         pct = m.get("porcentajeimpuesto") or Decimal(0)
-        t = pct.normalize() if pct else SIN_TARIFA
-        p = c.por_tarifa.setdefault(t, [Decimal(0)] * 4)
+        p = c.por_tarifa.setdefault(pct.normalize() if pct else SIN_TARIFA, [Decimal(0)] * 4)
         if v < 0:
-            c.generado += -v; c.base_cred += base; p[0] += base; p[1] += -v
+            c.creditos += -v; c.base_cred += base; p[0] += base; p[1] += -v
         elif v > 0:
             c.debitos += v; c.base_deb += base; p[2] += base; p[3] += v
     return sorted(acc.values(), key=lambda c: c.codigo)
 
 
+def _natural_tarifa(c: CuentaIVA, v: list) -> Decimal:
+    return (v[3] - v[1]) if c.tipo in NATURALEZA_DEBITO else (v[1] - v[3])
+
+
 def totales_iva(cuentas: list[CuentaIVA]) -> dict:
     z = Decimal(0)
-    gen = sum((c.generado for c in cuentas), z)
-    deb = sum((c.debitos for c in cuentas), z)
-    return dict(generado=gen, debitos=deb, neto=gen - deb,
+    s = lambda tipos: sum((c.natural for c in cuentas if c.tipo in tipos), z)  # noqa: E731
+    gen, dv = s({"generado"}), s({"dev_ventas"})
+    des, dc = s({"descontable"}), s({"dev_compras"})
+    otros = s({"otro", "dev_sin_clasificar"})
+    gen_neto, des_neto = gen - dv, des - dc
+    return dict(generado=gen, dev_ventas=dv, generado_neto=gen_neto, descontable=des, dev_compras=dc, descontable_neto=des_neto,
+                otros=otros, neto_2408=gen_neto - des_neto + otros,
+                creditos=sum((c.creditos for c in cuentas), z), debitos=sum((c.debitos for c in cuentas), z),
                 base_cred=sum((c.base_cred for c in cuentas), z), base_deb=sum((c.base_deb for c in cuentas), z))
 
 
 def iva_por_tarifa(cuentas: list[CuentaIVA]) -> list[dict]:
-    """Clasificación del 2408 por tarifa: base y IVA de créditos, base y IVA de débitos, neto."""
+    """Clasificación por tarifa: IVA generado, devoluciones en ventas, descontable, devoluciones en compras, otros y base."""
     agg: dict = {}
     for c in cuentas:
-        for t, (bc, g, bd, d) in c.por_tarifa.items():
-            a = agg.setdefault(t, [Decimal(0)] * 4)
-            agg[t] = [a[0] + bc, a[1] + g, a[2] + bd, a[3] + d]
+        for t, v in c.por_tarifa.items():
+            a = agg.setdefault(t, dict(base_gen=Decimal(0), generado=Decimal(0), dev_ventas=Decimal(0), base_des=Decimal(0),
+                                       descontable=Decimal(0), dev_compras=Decimal(0), otros=Decimal(0)))
+            n = _natural_tarifa(c, v)
+            if c.tipo == "generado":
+                a["generado"] += n; a["base_gen"] += v[0]
+            elif c.tipo == "dev_ventas":
+                a["dev_ventas"] += n
+            elif c.tipo == "descontable":
+                a["descontable"] += n; a["base_des"] += v[2]
+            elif c.tipo == "dev_compras":
+                a["dev_compras"] += n
+            else:
+                a["otros"] += n
     key = lambda t: (t == SIN_TARIFA, t if t != SIN_TARIFA else Decimal(0))  # noqa: E731
-    return [dict(tarifa=t, base_cred=v[0], generado=v[1], base_deb=v[2], debitos=v[3], neto=v[1] - v[3])
-            for t, v in sorted(agg.items(), key=lambda kv: key(kv[0]))]
+    out = []
+    for t, a in sorted(agg.items(), key=lambda kv: key(kv[0])):
+        out.append(dict(tarifa=t, **a, neto=a["generado"] - a["dev_ventas"] - (a["descontable"] - a["dev_compras"]) + a["otros"]))
+    return out
 
 
 # ---- 135517: IVA retenido (retenciones de IVA que le aplican a la empresa; cuenta de naturaleza débito)
@@ -542,15 +578,17 @@ def totales_reteiva(cuentas: list[CuentaRetIVA]) -> dict:
 
 
 def liquidar_iva(iva: list[CuentaIVA], reteiva: list[CuentaRetIVA], invertir: bool = True) -> dict:
-    """IVA por pagar = IVA generado − IVA descontable (débitos 2408) − IVA retenido (135517).
-    Con invertir=True todo se presenta como magnitud (generado +, descontable −, retenido −, por pagar +);
-    con invertir=False se presenta con el signo del auxiliar (2408 crédito negativo, 135517 débito positivo)."""
+    """IVA por pagar = IVA generado − devoluciones en ventas − (IVA descontable − devoluciones en compras) ± otros − IVA retenido.
+    Cada línea se presenta con su EFECTO sobre el IVA por pagar. invertir=True: +aumenta / −disminuye;
+    invertir=False: signo del auxiliar (pasivo negativo, todo con el signo contrario)."""
     t, r = totales_iva(iva), totales_reteiva(reteiva)
-    neto_2408 = t["generado"] - t["debitos"]
+    lin = dict(generado=t["generado"], dev_ventas=-t["dev_ventas"], descontable=-t["descontable"], dev_compras=t["dev_compras"],
+               otros=t["otros"])
+    neto_2408 = sum(lin.values(), Decimal(0))
     por_pagar = neto_2408 - r["neto"]
-    if invertir:
-        return dict(generado=t["generado"], descontable=-t["debitos"], neto_2408=neto_2408, retenido=-r["neto"], por_pagar=por_pagar)
-    return dict(generado=-t["generado"], descontable=t["debitos"], neto_2408=-neto_2408, retenido=r["neto"], por_pagar=-por_pagar)
+    sg = 1 if invertir else -1
+    return dict(**{k: v * sg for k, v in lin.items()}, generado_neto=t["generado_neto"] * sg, descontable_neto=-t["descontable_neto"] * sg,
+                neto_2408=neto_2408 * sg, retenido=-r["neto"] * sg, por_pagar=por_pagar * sg)
 
 
 def ejecutar_controles_iva(movs_periodo: list[dict], ingresos: Base, iva: list[CuentaIVA], total_movs: int,
@@ -570,25 +608,29 @@ def ejecutar_controles_iva(movs_periodo: list[dict], ingresos: Base, iva: list[C
         f"Suma de `valor` (signo del auxiliar): {fmt(ingresos.base_raw)}. No se usan débito, crédito ni saldos.")
     add("Hay movimientos en cuentas 2408 en el período", bool(iva),
         f"{len(iva)} cuenta(s) 2408." if iva else "No hay movimientos 2408 para la empresa y el período.", "warn")
+    sin = [c for c in iva if c.tipo in ("dev_sin_clasificar", "otro")]
+    add("Todas las cuentas 2408 clasificadas (generado / descontable / devolución en ventas / devolución en compras)", not sin,
+        ("Sin clasificar por el nombre: " + "; ".join(f"{c.codigo} {c.nombre}" for c in sin) +
+         ". Se tratan como «otros» (naturaleza crédito).") if sin else
+        "La clasificación sale del nombre de la cuenta (DEVOLUCIÓN + COMPRAS/VENTAS, DESCONTABLE, GENERADO).", "warn")
     add("Hay movimientos de la empresa en el período", bool(movs_periodo),
         f"{len(movs_periodo)} movimiento(s) en el rango." if movs_periodo else "No hay movimientos en el rango elegido.")
     add("Hay movimientos de IVA retenido (cuenta 135517) en el período", bool(reteiva),
         f"{len(reteiva or [])} cuenta(s) 135517; retención de IVA neta aplicada: {fmt(rt['neto'])}." if reteiva else
         "No hay movimientos en cuentas 135517 (IVA retenido) para la empresa y el período.", "warn")
-    pagar = t["generado"] - t["debitos"] - rt["neto"]
-    add("IVA por pagar (generado − descontable − retenido)", pagar >= 0,
+    pagar = t["neto_2408"] - rt["neto"]
+    add("IVA por pagar (generado − devol. ventas − descontable + devol. compras − retenido)", pagar >= 0,
         f"IVA por pagar: {fmt(pagar)}." if pagar >= 0 else f"Resultado negativo: saldo a favor de {fmt(-pagar)}.", "warn")
-    contrarias = [c for c in iva if c.neto < 0] if iva and iva[0].invertir else []
-    add("Cuentas 2408 con saldo a favor (neto negativo)", not contrarias,
-        ("; ".join(f"{c.codigo} {c.nombre}: {fmt(c.neto)}" for c in contrarias)) if contrarias else
-        "Ninguna cuenta 2408 con neto negativo.", "warn")
+    contrarias = [c for c in iva if c.natural < 0]
+    add("Cuentas 2408 con saldo contrario a su naturaleza", not contrarias,
+        ("; ".join(f"{c.codigo} {c.nombre}: {fmt(c.natural)}" for c in contrarias)) if contrarias else
+        "Ninguna cuenta 2408 con saldo contrario a su naturaleza.", "warn")
     ing = ingresos.base
-    if ing and iva:
-        ef = t["generado"] / ing * 100 if ingresos.invertir_signo else None
-        if ef is not None:
-            add("IVA generado frente al total de ingresos", ef <= 19,
-                f"IVA generado {fmt(t['generado'])} / ingresos {fmt(ing)} = {fmt(ef)}%"
-                + ("" if ef <= 19 else " — supera la tarifa general (19%): revise clasificación o exclusiones."), "warn")
+    if ing and iva and ingresos.invertir_signo:
+        ef = t["generado_neto"] / ing * 100
+        add("IVA generado (neto de devoluciones) frente al total de ingresos", ef <= 19,
+            f"IVA generado neto {fmt(t['generado_neto'])} / ingresos {fmt(ing)} = {fmt(ef)}%"
+            + ("" if ef <= 19 else " — supera la tarifa general (19%): revise clasificación o exclusiones."), "warn")
     add("Sin movimientos duplicados", total_movs == claves_unicas,
         f"{total_movs} movimiento(s) únicos almacenados (clave: empresa + id del auxiliar).")
     exc = excluidos or []

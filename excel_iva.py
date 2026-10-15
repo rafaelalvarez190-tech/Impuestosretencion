@@ -7,10 +7,10 @@ from decimal import Decimal
 from openpyxl import Workbook
 from openpyxl.styles import Font
 
-from core import Base, CuentaIVA, CuentaRetIVA, iva_por_tarifa, liquidar_iva, totales_iva, totales_reteiva
+from core import TIPOS_IVA, NATURALEZA_DEBITO, Base, CuentaIVA, CuentaRetIVA, iva_por_tarifa, liquidar_iva, totales_iva, totales_reteiva
 from excel import NUM, _f, _sheet
 
-TIPO = {"generado": "IVA generado", "descontable": "IVA descontable", "otro": "Otro"}
+TIPO = TIPOS_IVA
 
 
 def _negrita(ws, desde_fila=2, marcas=("TOTAL",)):
@@ -39,44 +39,53 @@ def exportar_iva(empresa: str, desde: str, hasta: str, ingresos: Base, iva: list
         ["Signo de presentación", "Invertido (ingresos e IVA generado positivos)" if inv else "Tal cual el auxiliar"],
         ["NIT excluidos del cálculo", ", ".join(nits or []) or "Ninguno"], ["Movimientos excluidos por NIT", len(exc)], [],
         ["Total ingresos (cuentas clase 4, neto)", _f(ingresos.base)],
-        ["IVA generado (2408, créditos)", _f(liq["generado"])],
-        ["(−) IVA descontable / devoluciones / otros débitos (2408)", _f(liq["descontable"])],
-        ["IVA neto 2408 (generado − descontable)", _f(liq["neto_2408"])],
+        ["IVA generado (2408)", _f(liq["generado"])],
+        ["(−) Devoluciones en ventas (2408)", _f(liq["dev_ventas"])],
+        ["(−) IVA descontable (2408)", _f(liq["descontable"])],
+        ["(+) Devoluciones en compras (2408)", _f(liq["dev_compras"])],
+        ["(±) Otras cuentas 2408 sin clasificar", _f(liq["otros"])],
+        ["IVA neto 2408", _f(liq["neto_2408"])],
         ["(−) IVA retenido (cuenta 135517, neto de reversiones)", _f(liq["retenido"])],
-        ["IVA POR PAGAR (generado − descontable − retenido)", _f(liq["por_pagar"])],
-        ["IVA generado / total ingresos (%)", float(t["generado"] / ingresos.base * 100) if ingresos.base and inv else None], [],
+        ["IVA POR PAGAR", _f(liq["por_pagar"])],
+        ["IVA generado neto / total ingresos (%)", float(t["generado_neto"] / ingresos.base * 100) if ingresos.base and inv else None], [],
         ["Esta liquidación no sustituye la validación de las reglas tributarias aplicables a la empresa y al período."],
     ]
     for f in filas:
         ws.append(f)
     ws["A1"].font = Font(bold=True, size=13)
     ws.column_dimensions["A"].width, ws.column_dimensions["B"].width = 58, 46
-    for r in range(9, 15):
+    for r in range(9, 18):
         ws[f"B{r}"].number_format = NUM
-    for r in (9, 12, 14):
+    for r in (9, 15, 17):
         ws[f"A{r}"].font = Font(bold=True)
-    ws["B15"].number_format = "0.00"
+    ws["B18"].number_format = "0.00"
 
     ing = [["Código", "Cuenta", "Movimientos", "Suma valor (auxiliar)", "Valor neto de la cuenta"]]
     ing += [[c.codigo, c.nombre, c.n, c.raw, c.valor] for c in ingresos.cuentas]
     ing.append(["TOTAL INGRESOS (clase 4)", "", ingresos.n_movs, ingresos.base_raw, ingresos.base])
     _negrita(_sheet(wb, "Ingresos clase 4", ing, [14, 44, 12, 24, 24], "DE"))
 
-    sg = 1 if inv else -1
-    cu = [["Código", "Cuenta", "Clasificación", "Tarifa(s) %", "Base (créditos)", "IVA generado (créditos)",
-           "Base (débitos)", "Descontable / devoluciones / débitos (−)", "Neto", "Movimientos"]]
-    for c in iva:
-        cu.append([c.codigo, c.nombre, TIPO[c.tipo], ", ".join(f"{k:f}" if k != "Sin tarifa" else k for k in c.por_tarifa),
-                   c.base_cred, c.generado, c.base_deb, -c.debitos, c.neto, c.n])
-    cu.append(["TOTAL IVA 2408", "", "", "", t["base_cred"], t["generado"], t["base_deb"], -t["debitos"], t["generado"] - t["debitos"], ""])
-    _negrita(_sheet(wb, "IVA 2408 por cuenta", cu, [14, 44, 18, 14, 22, 22, 22, 30, 20, 12], "EFGHI"))
+    orden = ["generado", "dev_ventas", "descontable", "dev_compras", "dev_sin_clasificar", "otro"]
+    cu = [["Código", "Cuenta", "Clasificación", "Tarifa(s) %", "Base", "Créditos", "Débitos", "Neto (naturaleza de la cuenta)", "Movimientos"]]
+    for tp in orden:
+        grp = [c for c in iva if c.tipo == tp]
+        bs = lambda c: c.base_deb if tp in NATURALEZA_DEBITO else c.base_cred  # noqa: E731
+        for c in grp:
+            cu.append([c.codigo, c.nombre, TIPO[c.tipo], ", ".join(f"{k:f}" if k != "Sin tarifa" else k for k in c.por_tarifa),
+                       bs(c), c.creditos, c.debitos, c.natural, c.n])
+        if grp:
+            cu.append([f"TOTAL {TIPO[tp]}", "", "", "", sum(bs(c) for c in grp), sum(c.creditos for c in grp), sum(c.debitos for c in grp),
+                       sum(c.natural for c in grp), ""])
+    _negrita(_sheet(wb, "IVA 2408 por cuenta", cu, [26, 44, 22, 14, 22, 22, 22, 30, 12], "EFGH"))
 
-    tf = [["Tarifa %", "Base (créditos)", "IVA generado", "Base (débitos)", "Descontable / devoluciones / débitos (−)", "Neto"]]
+    tf = [["Tarifa %", "Base generado", "IVA generado", "Devoluciones en ventas (−)", "Base descontable", "IVA descontable (−)",
+           "Devoluciones en compras (+)", "Otros", "Neto efecto en IVA por pagar"]]
     for r in iva_por_tarifa(iva):
-        tf.append([f"{r['tarifa']:f}" if r["tarifa"] != "Sin tarifa" else r["tarifa"], r["base_cred"], r["generado"], r["base_deb"],
-                   -r["debitos"], r["neto"]])
-    tf.append(["TOTAL", t["base_cred"], t["generado"], t["base_deb"], -t["debitos"], t["generado"] - t["debitos"]])
-    _negrita(_sheet(wb, "IVA por tarifa", tf, [14, 22, 22, 22, 36, 20], "BCDEF"))
+        tf.append([f"{r['tarifa']:f}" if r["tarifa"] != "Sin tarifa" else r["tarifa"], r["base_gen"], r["generado"], -r["dev_ventas"],
+                   r["base_des"], -r["descontable"], r["dev_compras"], r["otros"], r["neto"]])
+    cols = list(zip(*tf[1:])) if len(tf) > 1 else []
+    tf.append(["TOTAL"] + [sum(c) for c in cols[1:]] if cols else ["TOTAL"])
+    _negrita(_sheet(wb, "IVA por tarifa", tf, [14, 22, 22, 28, 22, 24, 28, 16, 28], "BCDEFGHI"))
 
     ri = [["Código", "Cuenta", "Tarifa(s) %", "Base (aplicadas)", "Retención aplicada (débitos)", "Reversiones (−)", "Neto", "Movimientos"]]
     for c in rv:
