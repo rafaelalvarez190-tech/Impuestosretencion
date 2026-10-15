@@ -276,7 +276,7 @@ def resolver_tarifa(maestro: list[dict], empresa: str) -> ResTarifa:
 
 
 # ---------------------------------------------------------------- retenciones 2365 / 2367
-GRUPOS_RETENCION = {"2365": "Retención en la fuente", "2367": "Impuesto a las ventas retenido (IVA)"}
+GRUPOS_RETENCION = {"2365": "Retención en la fuente", "2367": "Retención de ICA (industria y comercio)"}
 
 
 def grupo_retencion(codigo: str) -> str | None:
