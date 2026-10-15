@@ -1,4 +1,4 @@
-# Autorretención sobre ingresos (Python + Streamlit)
+# Retenciones, autorretención e IVA (Python + Streamlit)
 
 Calcula la **liquidación preliminar de autorretención** a partir del auxiliar contable.
 
@@ -8,7 +8,11 @@ Calcula la **liquidación preliminar de autorretención** a partir del auxiliar 
 - Importes con `Decimal` / centavos enteros; persistencia en SQLite; sin duplicados al reprocesar (clave = empresa + `id`).
 - Informe por cuenta con total, rastreo a movimientos originales, revisión de cuentas negativas, controles y exportación a Excel.
 
-## Flujo
+## Dos pestañas, cada una con su propio archivo
+- **Retención y autorretenciones**: autorretención sobre ingresos (clase 4) + retenciones practicadas (2365 y 2368).
+- **Impuesto sobre las ventas IVA**: total de ingresos (clase 4, **neto por cuenta**) + clasificación del IVA en las cuentas **2408** (por cuenta y por tarifa; generado = créditos, descontable/devoluciones/débitos en negativo) y el **IVA retenido (cuenta 135517)**, las retenciones de IVA que le aplican (débitos = aplicadas, créditos = reversiones). **IVA por pagar = IVA generado − IVA descontable − IVA retenido.** Su auxiliar se guarda aparte (no se mezcla con el de retenciones), tiene su propio campo de NIT excluidos (por defecto `800197268`, los cierres/pagos a la DIAN) y su propia exportación a Excel (`iva_<empresa>_<desde>_<hasta>.xlsx`).
+
+## Flujo (pestaña de retenciones)
 1. **Cargar auxiliar**: al procesar el archivo la app detecta las empresas que trae y pasa sola al paso 2.
 2. **Tarifas por empresa**: pide la tarifa de autorretención (%) de cada empresa detectada (queda guardada en el *maestro de empresas* para las próximas cargas) y los **NIT excluidos del cálculo** (por defecto `800197268`). Guardar → pasa a la liquidación.
 3. **Liquidación**: base, % y autorretención, retenciones 2365/2368, controles y exportación a Excel.
@@ -32,7 +36,7 @@ python -m pytest tests          # pruebas del cálculo
 ### Advertencias importantes de la publicación
 
 - **Persistencia:** en Streamlit Community Cloud el disco es efímero; la base SQLite (`data/autorretencion.db`) **se pierde cuando la app se reinicia o se duerme**. Para uso real, despliegue en un servidor con disco persistente (Docker/Render/Railway/VM) o cambie `db.py` a una base externa (p. ej. Postgres/Supabase). Mientras tanto, exporte a Excel cada liquidación y vuelva a cargar el maestro de empresas tras cada reinicio.
-- **Privacidad:** el auxiliar contable se sube al servidor de la app. Use un repositorio **privado**, restrinja el acceso a la app (Settings → Sharing) y **quite `tests/auxiliar-ejemplo.csv`** si el repositorio fuera público.
+- **Privacidad:** el auxiliar contable se sube al servidor de la app. Use un repositorio **privado**, restrinja el acceso a la app (Settings → Sharing) y **quite `tests/auxiliar-ejemplo.csv` (retenciones) y `tests/auxiliar-iva-ejemplo.csv` (IVA: ingresos reales + líneas 2408 **sintéticas** de prueba)** si el repositorio fuera público.
 - **Sin clave de edición:** cualquiera que abra la app puede cambiar el maestro de empresas; restrinja el acceso desde *Settings → Sharing*.
 
 ## Convención de signo

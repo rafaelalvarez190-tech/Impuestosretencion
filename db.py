@@ -8,13 +8,16 @@ from pathlib import Path
 
 DB_PATH = Path(os.environ.get("AUTORRETENCION_DB", Path(__file__).parent / "data" / "autorretencion.db"))
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS movimientos(
+# Cada módulo guarda su propio auxiliar: "ret" = retenciones/autorretención, "iva" = impuesto sobre las ventas.
+TABLAS = {"ret": "movimientos", "iva": "movimientos_iva"}
+_MOV = """CREATE TABLE IF NOT EXISTS {t}(
   key TEXT PRIMARY KEY, id TEXT, empresa TEXT NOT NULL, centrocosto TEXT, fecha TEXT NOT NULL,
   tipodocumento TEXT, nrodocumento TEXT, codigocuenta TEXT NOT NULL, nombrecuenta TEXT, descripcion TEXT,
   factura TEXT, identificacion TEXT, tercero TEXT, valor_c INTEGER NOT NULL, debito_c INTEGER, credito_c INTEGER,
   fila INTEGER, base_c INTEGER DEFAULT 0, porcentaje TEXT DEFAULT '0', tipo_persona TEXT DEFAULT '');
-CREATE INDEX IF NOT EXISTS ix_mov ON movimientos(empresa, fecha);
+CREATE INDEX IF NOT EXISTS ix_{t} ON {t}(empresa, fecha);
+"""
+SCHEMA = _MOV.format(t="movimientos") + _MOV.format(t="movimientos_iva") + """
 CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT);
 CREATE TABLE IF NOT EXISTS empresas(
   nombre TEXT PRIMARY KEY, tarifa TEXT, activa INTEGER NOT NULL DEFAULT 1, observaciones TEXT DEFAULT '');
@@ -30,10 +33,11 @@ def conn() -> sqlite3.Connection:
     c.row_factory = sqlite3.Row
     c.executescript(SCHEMA)
     # migración de bases creadas con versiones anteriores
-    cols = {r["name"] for r in c.execute("PRAGMA table_info(movimientos)")}
-    for name, ddl in (("base_c", "INTEGER DEFAULT 0"), ("porcentaje", "TEXT DEFAULT '0'"), ("tipo_persona", "TEXT DEFAULT ''")):
-        if name not in cols:
-            c.execute(f"ALTER TABLE movimientos ADD COLUMN {name} {ddl}")
+    for tabla in TABLAS.values():
+        cols = {r["name"] for r in c.execute(f"PRAGMA table_info({tabla})")}
+        for name, ddl in (("base_c", "INTEGER DEFAULT 0"), ("porcentaje", "TEXT DEFAULT '0'"), ("tipo_persona", "TEXT DEFAULT ''")):
+            if name not in cols:
+                c.execute(f"ALTER TABLE {tabla} ADD COLUMN {name} {ddl}")
     return c
 
 
@@ -44,7 +48,7 @@ def _to_mov(r: sqlite3.Row) -> dict:
     return m
 
 
-def upsert_movimientos(rows: list[dict]) -> dict:
+def upsert_movimientos(rows: list[dict], modulo: str = "ret") -> dict:
     """Inserta o actualiza por clave (empresa+id). Reprocesar un archivo NO duplica."""
     added = updated = unchanged = repeated = 0
     seen = set()
@@ -56,7 +60,7 @@ def upsert_movimientos(rows: list[dict]) -> dict:
             vals = {**{k: m[k] for k in COLS}, "key": m["key"], "valor_c": c100(m["valor"]),
                     "debito_c": c100(m["debito"]), "credito_c": c100(m["credito"]), "fila": m["fila"],
                     "base_c": c100(m["baseimpuesto"]), "porcentaje": str(m["porcentajeimpuesto"])}
-            prev = c.execute("SELECT * FROM movimientos WHERE key=?", (m["key"],)).fetchone()
+            prev = c.execute(f"SELECT * FROM {TABLAS[modulo]} WHERE key=?", (m["key"],)).fetchone()
             if prev is None:
                 added += 1
             elif all(prev[k] == vals[k] for k in ("valor_c", "fecha", "codigocuenta", "descripcion", "tercero",
@@ -66,36 +70,36 @@ def upsert_movimientos(rows: list[dict]) -> dict:
             else:
                 updated += 1
             cols = list(vals)
-            c.execute(f"INSERT OR REPLACE INTO movimientos({','.join(cols)}) VALUES({','.join('?' * len(cols))})",
+            c.execute(f"INSERT OR REPLACE INTO {TABLAS[modulo]}({','.join(cols)}) VALUES({','.join('?' * len(cols))})",
                       [vals[k] for k in cols])
     return dict(added=added, updated=updated, unchanged=unchanged, repeated=repeated)
 
 
-def movimientos(empresa: str | None = None) -> list[dict]:
+def movimientos(empresa: str | None = None, modulo: str = "ret") -> list[dict]:
     with conn() as c:
-        q, a = "SELECT * FROM movimientos", ()
+        q, a = f"SELECT * FROM {TABLAS[modulo]}", ()
         if empresa:
             q, a = q + " WHERE empresa=?", (empresa,)
         return [_to_mov(r) for r in c.execute(q + " ORDER BY fecha, CAST(id AS INTEGER)", a)]
 
 
-def inventario() -> list[dict]:
+def inventario(modulo: str = "ret") -> list[dict]:
+    extra = ("SUM(codigocuenta LIKE '2365%' OR codigocuenta LIKE '2368%') retenciones" if modulo == "ret"
+             else "SUM(codigocuenta LIKE '2408%') iva, SUM(codigocuenta LIKE '135517%') reteiva")
     with conn() as c:
         return [dict(r) for r in c.execute(
-            "SELECT empresa, substr(fecha,1,7) mes, COUNT(*) movimientos, "
-            "SUM(codigocuenta LIKE '4%') ingresos, "
-            "SUM(codigocuenta LIKE '2365%' OR codigocuenta LIKE '2368%') retenciones "
-            "FROM movimientos GROUP BY 1,2 ORDER BY 1,2")]
+            f"SELECT empresa, substr(fecha,1,7) mes, COUNT(*) movimientos, SUM(codigocuenta LIKE '4%') ingresos, {extra} "
+            f"FROM {TABLAS[modulo]} GROUP BY 1,2 ORDER BY 1,2")]
 
 
-def borrar_movimientos() -> None:
+def borrar_movimientos(modulo: str = "ret") -> None:
     with conn() as c:
-        c.execute("DELETE FROM movimientos")
+        c.execute(f"DELETE FROM {TABLAS[modulo]}")
 
 
-def total_movimientos() -> int:
+def total_movimientos(modulo: str = "ret") -> int:
     with conn() as c:
-        return c.execute("SELECT COUNT(*) FROM movimientos").fetchone()[0]
+        return c.execute(f"SELECT COUNT(*) FROM {TABLAS[modulo]}").fetchone()[0]
 
 
 # ---- maestro de empresas
