@@ -84,7 +84,7 @@ def inventario() -> list[dict]:
         return [dict(r) for r in c.execute(
             "SELECT empresa, substr(fecha,1,7) mes, COUNT(*) movimientos, "
             "SUM(codigocuenta LIKE '4%') ingresos, "
-            "SUM(codigocuenta LIKE '2365%' OR codigocuenta LIKE '2367%') retenciones "
+            "SUM(codigocuenta LIKE '2365%' OR codigocuenta LIKE '2368%') retenciones "
             "FROM movimientos GROUP BY 1,2 ORDER BY 1,2")]
 
 

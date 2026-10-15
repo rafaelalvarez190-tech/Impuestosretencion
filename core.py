@@ -275,8 +275,8 @@ def resolver_tarifa(maestro: list[dict], empresa: str) -> ResTarifa:
     return ResTarifa("ok", Decimal(str(e["tarifa"])))
 
 
-# ---------------------------------------------------------------- retenciones 2365 / 2367
-GRUPOS_RETENCION = {"2365": "Retención en la fuente", "2367": "Retención de ICA (industria y comercio)"}
+# ---------------------------------------------------------------- retenciones 2365 / 2368
+GRUPOS_RETENCION = {"2365": "Retención en la fuente", "2368": "Retención de ICA (industria y comercio)"}
 
 
 def grupo_retencion(codigo: str) -> str | None:
@@ -318,7 +318,7 @@ def _tipo_cuenta(nombre: str) -> str:
 
 
 def build_retenciones(movs: Iterable[dict], invertir_signo: bool = True) -> list[CuentaRet]:
-    """Cuentas 2365 y 2367 del período. Causación = movimientos con valor < 0 (crédito); el resto son
+    """Cuentas 2365 y 2368 del período. Causación = movimientos con valor < 0 (crédito); el resto son
     cierres/pagos/devoluciones. La base y el % salen de baseimpuesto / porcentajeimpuesto del auxiliar."""
     acc: dict[str, CuentaRet] = {}
     for m in movs:
@@ -392,9 +392,9 @@ def ejecutar_controles(movs_periodo: list[dict], base: Base, tr: ResTarifa, tota
         (f"{len(exc)} movimiento(s) con NIT {', '.join(nits or [])} excluidos de la base y de las retenciones (ver detalle)."
          if exc else f"Sin movimientos con NIT excluido ({', '.join(nits or []) or 'ninguno configurado'})."))
     ret = retenciones or []
-    add("Retenciones 2365 / 2367 incluidas en el informe", bool(ret),
+    add("Retenciones 2365 / 2368 incluidas en el informe", bool(ret),
         f"{len(ret)} cuenta(s) de retención en el período." if ret else
-        "No hay movimientos en cuentas 2365 ni 2367 para la empresa y el período.", "warn")
+        "No hay movimientos en cuentas 2365 ni 2368 para la empresa y el período.", "warn")
     contab = sum((c.creditos for c in ret if c.tipo == "autorretencion"), Decimal(0))
     if auto is not None and contab:
         dif = contab - auto

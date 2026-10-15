@@ -59,7 +59,7 @@ if step == STEPS[0]:
     inv = db.inventario()
     if inv:
         st.dataframe(pd.DataFrame(inv).rename(columns={"empresa": "Empresa", "mes": "Mes", "movimientos": "Movimientos",
-                                                         "ingresos": "De ingresos (4)", "retenciones": "Retenciones (2365/2367)"}), hide_index=True, width="stretch")
+                                                         "ingresos": "De ingresos (4)", "retenciones": "Retenciones (2365/2368)"}), hide_index=True, width="stretch")
         if st.button("Continuar a las tarifas por empresa →"):
             ss["goto"] = STEPS[1]; st.rerun()
         with st.expander("Borrar todos los movimientos"):
@@ -186,8 +186,8 @@ if step == STEPS[2]:
                 dfm = dfm[dfm.apply(lambda r: q.lower() in " ".join(map(str, r.values)).lower(), axis=1)]
             st.dataframe(dfm, hide_index=True, width="stretch")
 
-    # ------------------------------------------------ retenciones 2365 / 2367
-    st.subheader("Retenciones practicadas (cuentas 2365 y 2367)")
+    # ------------------------------------------------ retenciones 2365 / 2368
+    st.subheader("Retenciones practicadas (cuentas 2365 y 2368)")
     st.caption("Retención causada = movimientos con `valor` negativo (crédito); Débitos = cierres, pagos y devoluciones. "
                "Base y tarifa vienen de `baseimpuesto` y `porcentajeimpuesto` del auxiliar. Las cuentas de *autorretención* y de *pago* "
                "se muestran pero no suman en el total de retenciones practicadas.")
@@ -227,7 +227,7 @@ if step == STEPS[2]:
                                             "Base": float(m.get("baseimpuesto", 0)), "%": float(m.get("porcentajeimpuesto", 0)),
                                             "valor": float(m["valor"])} for m in c.movs]), hide_index=True, width="stretch")
     else:
-        st.info("No hay movimientos en cuentas 2365 ni 2367 para esta empresa y período.")
+        st.info("No hay movimientos en cuentas 2365 ni 2368 para esta empresa y período.")
 
     if excluidos:
         with st.expander(f"Movimientos excluidos del cálculo por NIT ({len(excluidos)}) — {', '.join(nits)}"):

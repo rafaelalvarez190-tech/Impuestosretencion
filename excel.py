@@ -33,7 +33,7 @@ def _sheet(wb, title, rows, widths, num_cols=()):
 
 
 def _hoja_ica(wb, cuentas: list[CuentaRet], invertir: bool) -> None:
-    """Hoja 'ICA 2367 por C. costos': subtotales por centro de costos (resumen) + detalle de movimientos."""
+    """Hoja 'ICA 2368 por C. costos': subtotales por centro de costos (resumen) + detalle de movimientos."""
     sgn = -1 if invertir else 1
     SIN = "(Sin centro de costos)"
     centros: dict[str, dict] = {}
@@ -49,9 +49,9 @@ def _hoja_ica(wb, cuentas: list[CuentaRet], invertir: bool) -> None:
                 a["dev"] += m["valor"]
             d["movs"].append((c, m))
     orden = sorted(centros, key=lambda k: (k == SIN, k))
-    ws = wb.create_sheet("ICA 2367 por C. costos")
+    ws = wb.create_sheet("ICA 2368 por C. costos")
     bold = Font(bold=True)
-    ws.append(["RETENCIÓN DE ICA (CUENTAS 2367) — SUBTOTAL POR CENTRO DE COSTOS"]); ws["A1"].font = Font(bold=True, size=13)
+    ws.append(["RETENCIÓN DE ICA (CUENTAS 2368) — SUBTOTAL POR CENTRO DE COSTOS"]); ws["A1"].font = Font(bold=True, size=13)
     ws.append(["Devoluciones / reversiones en negativo; el neto = causada + devoluciones."])
     ws.append([])
     ws.append(["Centro de costos", "Cuenta", "Nombre cuenta", "Base (movimientos de causación)", "Retención causada",
@@ -69,7 +69,7 @@ def _hoja_ica(wb, cuentas: list[CuentaRet], invertir: bool) -> None:
         for c in ws[ws.max_row]:
             c.font = bold
         tot = [s + v for s, v in zip(tot, sub)]
-    ws.append(["TOTAL RETENCIÓN DE ICA (2367)", "", "", *[float(v) for v in tot]])
+    ws.append(["TOTAL RETENCIÓN DE ICA (2368)", "", "", *[float(v) for v in tot]])
     for c in ws[ws.max_row]:
         c.font = bold
     resumen_fin = ws.max_row
@@ -118,11 +118,11 @@ def exportar(empresa: str, desde: str, hasta: str, base: Base, tr: ResTarifa, ch
         ["Base total de autorretención", _f(base.base)],
         ["Porcentaje aplicado (%)", _f(pct) if ok else None],
         ["Autorretención calculada", _f(auto) if ok else "No calculada"], [],
-        ["RETENCIONES PRACTICADAS EN EL PERÍODO (cuentas 2365 y 2367)"],
+        ["RETENCIONES PRACTICADAS EN EL PERÍODO (cuentas 2365 y 2368)"],
         ["2365 Retención en la fuente — causada (créditos)", _f(tot["2365"]["creditos"])],
         ["2365 Retención en la fuente — devoluciones / reversiones (−)", -_f(tot["2365"]["debitos"])],
-        ["2367 Retención de ICA — causada (créditos)", _f(tot["2367"]["creditos"])],
-        ["2367 Retención de ICA — devoluciones / reversiones (−)", -_f(tot["2367"]["debitos"])],
+        ["2368 Retención de ICA — causada (créditos)", _f(tot["2368"]["creditos"])],
+        ["2368 Retención de ICA — devoluciones / reversiones (−)", -_f(tot["2368"]["debitos"])],
         ["Total retenciones practicadas (neto de devoluciones)", _f(tot["total"]["creditos"] - tot["total"]["debitos"])],
         ["NIT excluidos del cálculo", ", ".join(nits or []) or "Ninguno"],
         ["Movimientos excluidos por NIT", len(exc)], [],
@@ -145,7 +145,7 @@ def exportar(empresa: str, desde: str, hasta: str, base: Base, tr: ResTarifa, ch
     for c in w[w.max_row]:
         c.font = Font(bold=True)
 
-    # ---- retenciones 2365 / 2367
+    # ---- retenciones 2365 / 2368
     rt = [["Grupo", "Código", "Cuenta", "Tipo de cuenta", "Tarifa(s) %", "Base (movimientos de causación)",
            "Retención causada (créditos)", "Devoluciones / reversiones / débitos (−)", "Neto", "Movimientos"]]
     for g, nombre in GRUPOS_RETENCION.items():
@@ -157,7 +157,7 @@ def exportar(empresa: str, desde: str, hasta: str, base: Base, tr: ResTarifa, ch
         rt.append([f"Subtotal {g} (solo retenciones practicadas)", "", "", "", "", t["base"], t["creditos"], -t["debitos"], t["creditos"] - t["debitos"], ""])
     t = tot["total"]
     rt.append(["TOTAL RETENCIONES PRACTICADAS (neto)", "", "", "", "", t["base"], t["creditos"], -t["debitos"], t["creditos"] - t["debitos"], ""])
-    w = _sheet(wb, "Retenciones 2365-2367", rt, [44, 14, 40, 26, 12, 24, 24, 26, 20, 12], "FGHI")
+    w = _sheet(wb, "Retenciones 2365-2368", rt, [44, 14, 40, 26, 12, 24, 24, 26, 20, 12], "FGHI")
     for row in w.iter_rows(min_row=2):
         if str(row[0].value).startswith(("Subtotal", "TOTAL")):
             for c in row:
@@ -170,7 +170,7 @@ def exportar(empresa: str, desde: str, hasta: str, base: Base, tr: ResTarifa, ch
                 pp.append([c.codigo, c.nombre, per, b, r])
     _sheet(wb, "Retenciones por tipo persona", pp, [14, 44, 18, 22, 22], "DE")
 
-    ica = [c for c in ret if c.grupo == "2367"]
+    ica = [c for c in ret if c.grupo == "2368"]
     if ica:
         _hoja_ica(wb, ica, base.invertir_signo)
 
