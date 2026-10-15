@@ -1,38 +1,34 @@
-# Autorretención sobre ingresos
+# Autorretención sobre ingresos (Python + Streamlit)
 
-Aplicación web (sitio estático, sin servidor) que calcula la **liquidación preliminar de autorretención** a partir del auxiliar contable.
+Calcula la **liquidación preliminar de autorretención** a partir del auxiliar contable.
 
-- Base = suma neta de la columna `valor` de las cuentas cuyo código empieza por **4** (empresa y período elegidos). No usa `debito`, `credito`, `saldoanterior` ni `saldoactual`.
-- Autorretención = Base × Porcentaje / 100. El porcentaje **no está en el código**: se parametriza por empresa y vigencia.
-- Todo se procesa en el navegador (IndexedDB); los datos contables no salen del equipo.
+- **Base** = suma neta (con signo) de la columna `valor` de las cuentas cuyo código empieza por **4**, por empresa y período. No usa `debito`, `credito`, `saldoanterior` ni `saldoactual`.
+- **Autorretención** = Base × Porcentaje / 100. El porcentaje se parametriza por empresa y vigencia (no está en el código).
+- Importes con `Decimal` / centavos enteros; persistencia en SQLite; sin duplicados al reprocesar (clave = empresa + `id`).
+- Informe por cuenta con total, rastreo a movimientos originales, revisión de cuentas negativas, controles y exportación a Excel.
 
-## Uso
-
-1. **Auxiliar**: cargue el CSV/Excel (columnas obligatorias: `empresa, fecha, codigocuenta, nombrecuenta, valor`). Recargar el mismo archivo no duplica movimientos (clave = empresa + `id`).
-2. **Configuración**: desbloquee la edición (la primera vez crea una clave) y registre tarifa, vigencia desde/hasta, estado, referencia normativa y observaciones. Se advierte si dos tarifas activas de una empresa se superponen; en ese caso (o si ninguna tarifa cubre todo el período) **no se calcula**.
-3. **Liquidación**: elija empresa y período. Verá base, % y autorretención por separado, el detalle por cuenta, el rastreo a los movimientos originales, la revisión de cuentas negativas, los controles y el botón **Exportar a Excel** (Resumen, Detalle por cuenta, Movimientos, Cuentas negativas, Validaciones).
-
-Convención de signo: en el auxiliar el ingreso (crédito) viene negativo. Por defecto se suma `valor` tal cual y se **presenta invertido** para que el ingreso aparezca positivo; la casilla de la pantalla de liquidación permite ver el signo original.
-
-> Liquidación preliminar sujeta a revisión. La parametrización de la tarifa no sustituye la validación de las reglas tributarias aplicables.
-> La clave de edición solo protege la pantalla en el navegador; no es seguridad de servidor. Los datos y tarifas viven en el navegador de cada usuario: use *Exportar copia* para respaldar las tarifas.
-
-## Publicar
+## Ejecutar en local
 
 ```bash
-git init && git add . && git commit -m "Autorretención: versión inicial"
-git branch -M main
-git remote add origin https://github.com/<usuario>/<repositorio>.git
-git push -u origin main
+python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+streamlit run app.py
+python -m pytest tests          # pruebas del cálculo
 ```
 
-**Netlify**: *Add new site → Import an existing project → GitHub →* elija el repositorio. Build command: vacío; Publish directory: `.` (ya está en `netlify.toml`). Cada `git push` redespliega.
+## Publicar en Streamlit Community Cloud
 
-## Pruebas del cálculo
+1. Suba esta carpeta a un repositorio de GitHub (`git init`, `git add .`, `git commit`, `git push`).
+2. En <https://share.streamlit.io> → **Create app** → elija el repositorio, rama `main`, archivo principal `app.py` → **Deploy**.
+3. (Recomendado) En *Settings → Secrets / Environment* defina `AUTORRETENCION_PIN` con la clave de edición de tarifas; si no, la app pide crearla la primera vez.
 
-```bash
-node tests/core.test.mjs
-```
-`tests/auxiliar-ejemplo.csv` es el auxiliar de ejemplo (ConfianzaGlobal, sept. 2026). Contiene datos contables: use un repositorio **privado** o quite ese archivo antes de publicarlo.
+### Advertencias importantes de la publicación
 
-Librería de terceros incluida: SheetJS (`vendor/xlsx.full.min.js`, Apache-2.0).
+- **Persistencia:** en Streamlit Community Cloud el disco es efímero; la base SQLite (`data/autorretencion.db`) **se pierde cuando la app se reinicia o se duerme**. Para uso real, despliegue en un servidor con disco persistente (Docker/Render/Railway/VM) o cambie `db.py` a una base externa (p. ej. Postgres/Supabase). Mientras tanto, exporte a Excel cada liquidación y guarde las tarifas.
+- **Privacidad:** el auxiliar contable se sube al servidor de la app. Use un repositorio **privado**, restrinja el acceso a la app (Settings → Sharing) y **quite `tests/auxiliar-ejemplo.csv`** si el repositorio fuera público.
+- **Clave de edición:** protege la pantalla de configuración; no sustituye el control de acceso a la app.
+
+## Convención de signo
+En el auxiliar el ingreso (crédito) viene negativo. Se suma `valor` tal cual y se **presenta invertido** (ingresos positivos); la casilla de la pestaña Liquidación permite ver el signo original.
+
+> Liquidación preliminar sujeta a revisión. La parametrización de la tarifa no sustituye la validación de las reglas tributarias aplicables a la empresa y al período.
