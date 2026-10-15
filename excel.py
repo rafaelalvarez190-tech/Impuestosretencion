@@ -33,8 +33,10 @@ def _sheet(wb, title, rows, widths, num_cols=()):
 
 
 def exportar(empresa: str, desde: str, hasta: str, base: Base, tr: ResTarifa, checks: list[dict],
-             retenciones: list[CuentaRet] | None = None) -> bytes:
+             retenciones: list[CuentaRet] | None = None, excluidos: list[dict] | None = None,
+             nits: list[str] | None = None) -> bytes:
     ret = retenciones or []
+    exc = excluidos or []
     ok = tr.status == "ok"
     pct = tr.tarifa if ok else None
     auto = calc_autorretencion(base.base, pct) if ok else None
@@ -56,7 +58,9 @@ def exportar(empresa: str, desde: str, hasta: str, base: Base, tr: ResTarifa, ch
         ["2365 Retención en la fuente — débitos (cierres/devoluciones)", _f(tot["2365"]["debitos"])],
         ["2367 IVA retenido — causada (créditos)", _f(tot["2367"]["creditos"])],
         ["2367 IVA retenido — débitos (cierres/devoluciones)", _f(tot["2367"]["debitos"])],
-        ["Total retenciones practicadas (causadas)", _f(tot["total"]["creditos"])], [],
+        ["Total retenciones practicadas (causadas)", _f(tot["total"]["creditos"])],
+        ["NIT excluidos del cálculo", ", ".join(nits or []) or "Ninguno"],
+        ["Movimientos excluidos por NIT", len(exc)], [],
         ["La parametrización de la tarifa no sustituye la validación de las reglas tributarias aplicables a la empresa y al período."],
     ]
     for f in filas:
@@ -115,6 +119,12 @@ def exportar(empresa: str, desde: str, hasta: str, base: Base, tr: ResTarifa, ch
         mv += [[m["codigocuenta"], m["nombrecuenta"], m["fila"], m["id"], m["fecha"], m["tipodocumento"], m["nrodocumento"],
                 m["identificacion"], m["tercero"], m["descripcion"], m["centrocosto"], m["valor"]] for m in c.movs]
     _sheet(wb, "Mov. ingresos", mv, [12, 30, 10, 10, 12, 8, 10, 14, 30, 40, 20, 18], "L")
+
+    ex = [["Cuenta", "Nombre cuenta", "Fila archivo", "Id auxiliar", "Fecha", "Tipo doc.", "Nro doc.", "Identificación", "Tercero",
+           "Descripción", "valor"]]
+    ex += [[m["codigocuenta"], m["nombrecuenta"], m["fila"], m["id"], m["fecha"], m["tipodocumento"], m["nrodocumento"],
+            m["identificacion"], m["tercero"], m["descripcion"], m["valor"]] for m in exc]
+    _sheet(wb, "Excluidos por NIT", ex, [12, 40, 10, 10, 12, 8, 10, 14, 24, 60, 18], "K")
 
     ng = [["Código", "Cuenta", "Valor neto"]] + [[c.codigo, c.nombre, c.valor] for c in base.negativas]
     ng += [[], ["Efecto de las negativas en la base", "", base.efecto_negativas], ["Base sin cuentas negativas", "", base.base_sin_negativas]]

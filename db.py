@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS movimientos(
   factura TEXT, identificacion TEXT, tercero TEXT, valor_c INTEGER NOT NULL, debito_c INTEGER, credito_c INTEGER,
   fila INTEGER, base_c INTEGER DEFAULT 0, porcentaje TEXT DEFAULT '0', tipo_persona TEXT DEFAULT '');
 CREATE INDEX IF NOT EXISTS ix_mov ON movimientos(empresa, fecha);
+CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT);
 CREATE TABLE IF NOT EXISTS empresas(
   nombre TEXT PRIMARY KEY, tarifa TEXT, activa INTEGER NOT NULL DEFAULT 1, observaciones TEXT DEFAULT '');
 """
@@ -110,3 +111,15 @@ def guardar_empresas(lista: list[dict]) -> None:
         c.executemany("INSERT INTO empresas VALUES(?,?,?,?)",
                       [(e["nombre"].strip(), None if e.get("tarifa") in (None, "") else str(e["tarifa"]),
                         int(bool(e.get("activa", True))), e.get("observaciones") or "") for e in lista])
+
+
+# ---- parámetros
+def get_meta(k: str, default: str = "") -> str:
+    with conn() as c:
+        r = c.execute("SELECT v FROM meta WHERE k=?", (k,)).fetchone()
+        return r["v"] if r else default
+
+
+def set_meta(k: str, v: str) -> None:
+    with conn() as c:
+        c.execute("INSERT OR REPLACE INTO meta VALUES(?,?)", (k, v))

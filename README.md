@@ -3,7 +3,8 @@
 Calcula la **liquidación preliminar de autorretención** a partir del auxiliar contable.
 
 - **Base** = suma neta (con signo) de la columna `valor` de las cuentas cuyo código empieza por **4**, por empresa y período. No usa `debito`, `credito`, `saldoanterior` ni `saldoactual`.
-- **Autorretención** = Base × Porcentaje / 100. El porcentaje se parametriza por empresa y vigencia (no está en el código).
+- **Autorretención** = Base × Porcentaje / 100. El porcentaje se configura por empresa en el **Maestro de empresas** (no está en el código); sin tarifa no se calcula.
+- **Retenciones 2365 y 2367** del período: por cuenta, con base, tarifa, retención causada (créditos), débitos (cierres/pagos/devoluciones), neto y desglose jurídica/natural. Las cuentas de autorretención y de pago se muestran pero no suman en el total de retenciones practicadas.
 - Importes con `Decimal` / centavos enteros; persistencia en SQLite; sin duplicados al reprocesar (clave = empresa + `id`).
 - Informe por cuenta con total, rastreo a movimientos originales, revisión de cuentas negativas, controles y exportación a Excel.
 
@@ -20,13 +21,12 @@ python -m pytest tests          # pruebas del cálculo
 
 1. Suba esta carpeta a un repositorio de GitHub (`git init`, `git add .`, `git commit`, `git push`).
 2. En <https://share.streamlit.io> → **Create app** → elija el repositorio, rama `main`, archivo principal `app.py` → **Deploy**.
-3. (Recomendado) En *Settings → Secrets / Environment* defina `AUTORRETENCION_PIN` con la clave de edición de tarifas; si no, la app pide crearla la primera vez.
 
 ### Advertencias importantes de la publicación
 
-- **Persistencia:** en Streamlit Community Cloud el disco es efímero; la base SQLite (`data/autorretencion.db`) **se pierde cuando la app se reinicia o se duerme**. Para uso real, despliegue en un servidor con disco persistente (Docker/Render/Railway/VM) o cambie `db.py` a una base externa (p. ej. Postgres/Supabase). Mientras tanto, exporte a Excel cada liquidación y guarde las tarifas.
+- **Persistencia:** en Streamlit Community Cloud el disco es efímero; la base SQLite (`data/autorretencion.db`) **se pierde cuando la app se reinicia o se duerme**. Para uso real, despliegue en un servidor con disco persistente (Docker/Render/Railway/VM) o cambie `db.py` a una base externa (p. ej. Postgres/Supabase). Mientras tanto, exporte a Excel cada liquidación y vuelva a cargar el maestro de empresas tras cada reinicio.
 - **Privacidad:** el auxiliar contable se sube al servidor de la app. Use un repositorio **privado**, restrinja el acceso a la app (Settings → Sharing) y **quite `tests/auxiliar-ejemplo.csv`** si el repositorio fuera público.
-- **Clave de edición:** protege la pantalla de configuración; no sustituye el control de acceso a la app.
+- **Sin clave de edición:** cualquiera que abra la app puede cambiar el maestro de empresas; restrinja el acceso desde *Settings → Sharing*.
 
 ## Convención de signo
 En el auxiliar el ingreso (crédito) viene negativo. Se suma `valor` tal cual y se **presenta invertido** (ingresos positivos); la casilla de la pestaña Liquidación permite ver el signo original.

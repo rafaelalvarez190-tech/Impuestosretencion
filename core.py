@@ -137,6 +137,33 @@ def fingerprint(m: dict) -> str:
     return hashlib.sha1(raw.encode()).hexdigest()[:16]
 
 
+# ---------------------------------------------------------------- NIT excluidos
+NITS_EXCLUIDOS_DEFECTO = "800197268"
+
+
+def solo_digitos(x: Any) -> str:
+    return re.sub(r"\D", "", str(x or ""))
+
+
+def parse_nits(texto: str) -> list[str]:
+    """'800197268, 900.123.456-1' -> ['800197268', '9001234561']"""
+    return [d for d in (solo_digitos(p) for p in re.split(r"[,;\n]", texto or "")) if d]
+
+
+def nit_excluido(identificacion: Any, nits: list[str]) -> bool:
+    """Coincide con el NIT sin DV (800197268) o con DV pegado (8001972684)."""
+    d = solo_digitos(identificacion)
+    return bool(d) and any(d == n or (len(d) == len(n) + 1 and d.startswith(n)) for n in nits)
+
+
+def separar_excluidos(movs: Iterable[dict], nits: list[str]) -> tuple[list[dict], list[dict]]:
+    """(incluidos, excluidos): los movimientos cuyo tercero tenga un NIT excluido no entran a ningún cálculo."""
+    inc, exc = [], []
+    for m in movs:
+        (exc if nit_excluido(m.get("identificacion"), nits) else inc).append(m)
+    return inc, exc
+
+
 def es_cuenta_ingreso(codigo: str) -> bool:
     return str(codigo).strip().startswith(PREFIJO_INGRESOS)
 
@@ -335,7 +362,8 @@ def fmt(n: Decimal | float, dec: int = 2) -> str:
 
 
 def ejecutar_controles(movs_periodo: list[dict], base: Base, tr: ResTarifa, total_movs: int, claves_unicas: int,
-                       retenciones: list[CuentaRet] | None = None, auto: Decimal | None = None) -> list[dict]:
+                       retenciones: list[CuentaRet] | None = None, auto: Decimal | None = None,
+                       excluidos: list[dict] | None = None, nits: list[str] | None = None) -> list[dict]:
     out = []
 
     def add(titulo, ok, detalle, nivel="error"):
@@ -359,6 +387,10 @@ def ejecutar_controles(movs_periodo: list[dict], base: Base, tr: ResTarifa, tota
         f"{total_movs} movimiento(s) únicos almacenados (clave: empresa + id del auxiliar).")
     add("Base rastreable hasta los movimientos originales", True,
         "Cada cuenta enlaza a sus movimientos (fila del archivo e id del auxiliar).")
+    exc = excluidos or []
+    add("Movimientos de NIT excluidos fuera del cálculo", True,
+        (f"{len(exc)} movimiento(s) con NIT {', '.join(nits or [])} excluidos de la base y de las retenciones (ver detalle)."
+         if exc else f"Sin movimientos con NIT excluido ({', '.join(nits or []) or 'ninguno configurado'})."))
     ret = retenciones or []
     add("Retenciones 2365 / 2367 incluidas en el informe", bool(ret),
         f"{len(ret)} cuenta(s) de retención en el período." if ret else

@@ -17,15 +17,22 @@ st.caption("Cuentas contables clase 4 · base = suma neta de la columna `valor` 
 st.warning("Liquidación **preliminar sujeta a revisión**. La parametrización de la tarifa no sustituye la validación "
            "de las reglas tributarias aplicables a la empresa y al período.")
 
-tab_datos, tab_cfg, tab_liq = st.tabs(["1. Auxiliar", "2. Maestro de empresas", "3. Liquidación"])
+ss = st.session_state
+STEPS = ["1. Cargar auxiliar", "2. Tarifas por empresa", "3. Liquidación"]
+if "goto" in ss:                       # navegación programática (debe aplicarse antes de crear el radio)
+    ss["step"] = ss.pop("goto")
+ss.setdefault("step", STEPS[0])
+step = st.radio("Paso", STEPS, horizontal=True, key="step", label_visibility="collapsed")
 
 # =============================================================== 1. AUXILIAR
-with tab_datos:
+if step == STEPS[0]:
     st.subheader("Cargar auxiliar contable")
     files = st.file_uploader("CSV o Excel (obligatorias: empresa, fecha, codigocuenta, nombrecuenta, valor)",
                              type=["csv", "xlsx", "xlsm"], accept_multiple_files=True)
-    st.caption("Volver a cargar el mismo archivo no duplica movimientos: se identifican por empresa + id del auxiliar.")
-    if files and st.button("Procesar archivos", type="primary"):
+    st.caption("Volver a cargar el mismo archivo no duplica movimientos: se identifican por empresa + id del auxiliar. "
+               "Al procesar, la app detecta las empresas del archivo y pasa a pedirle la tarifa de cada una.")
+    if files and st.button("Procesar archivos y continuar", type="primary"):
+        flash, cargados, empresas_det = [], 0, set()
         for f in files:
             try:
                 rows, errs = core.normalize_rows(core.read_table(f.getvalue(), f.name))
@@ -36,15 +43,25 @@ with tab_datos:
                 st.error(f"**{f.name}**: {errs[0] if errs else 'sin movimientos válidos'}")
                 continue
             r = db.upsert_movimientos(rows)
+            cargados += 1
+            empresas_det |= {m["empresa"] for m in rows}
             msg = (f"**{f.name}**: {len(rows)} filas leídas → **{r['added']}** nuevas, {r['updated']} actualizadas, "
                    f"{r['unchanged']} ya existentes (no duplicadas)."
-                   + (f" {r['repeated']} repetidas dentro del archivo." if r["repeated"] else ""))
-            (st.warning if errs else st.success)(msg + (f"\n\n{len(errs)} fila(s) omitidas: " + " | ".join(errs[:5]) if errs else ""))
+                   + (f" {r['repeated']} repetidas dentro del archivo." if r["repeated"] else "")
+                   + (f"\n\n{len(errs)} fila(s) omitidas: " + " | ".join(errs[:5]) if errs else ""))
+            flash.append(("warning" if errs else "success", msg))
+        if cargados:
+            flash.append(("info", "Empresas detectadas en el archivo: **" + ", ".join(sorted(empresas_det)) + "**."))
+            ss["flash"] = flash
+            ss["goto"] = STEPS[1]
+            st.rerun()
     st.subheader("Movimientos almacenados")
     inv = db.inventario()
     if inv:
         st.dataframe(pd.DataFrame(inv).rename(columns={"empresa": "Empresa", "mes": "Mes", "movimientos": "Movimientos",
                                                          "ingresos": "De ingresos (4)", "retenciones": "Retenciones (2365/2367)"}), hide_index=True, width="stretch")
+        if st.button("Continuar a las tarifas por empresa →"):
+            ss["goto"] = STEPS[1]; st.rerun()
         with st.expander("Borrar todos los movimientos"):
             if st.checkbox("Confirmo que quiero borrar todos los movimientos (el maestro de empresas no se borra)") and st.button("Borrar"):
                 db.borrar_movimientos()
@@ -52,52 +69,58 @@ with tab_datos:
     else:
         st.info("Aún no hay movimientos cargados.")
 
-# =============================================================== 2. MAESTRO DE EMPRESAS
-with tab_cfg:
-    st.subheader("Maestro de empresas")
-    st.caption("Configure el nombre de cada empresa (**tal como aparece en la columna `empresa` del auxiliar**) y su tarifa de "
-               "autorretención. La tarifa no está en el código. Sin tarifa, la autorretención no se calcula.")
-    maestro = db.empresas()
+# =============================================================== 2. TARIFAS POR EMPRESA (maestro)
+if step == STEPS[1]:
+    for kind, msg in ss.pop("flash", []):
+        getattr(st, kind)(msg)
+    st.subheader("Maestro de empresas: tarifa de autorretención")
     en_datos = sorted({m["empresa"] for m in db.movimientos()})
-    faltan = [e for e in en_datos if e not in {x["nombre"] for x in maestro}]
-    if faltan:
-        st.info(f"Empresas del auxiliar que aún no están en el maestro: **{', '.join(faltan)}**.")
-        if st.button("Agregarlas al maestro (sin tarifa)"):
-            db.guardar_empresas(maestro + [dict(nombre=e, tarifa=None, activa=True, observaciones="") for e in faltan]); st.rerun()
-    df0 = pd.DataFrame(maestro or [], columns=["nombre", "tarifa", "activa", "observaciones"])
-    if df0.empty:
-        df0 = pd.DataFrame({"nombre": pd.Series(dtype="str"), "tarifa": pd.Series(dtype="float"),
-                            "activa": pd.Series(dtype="bool"), "observaciones": pd.Series(dtype="str")})
-    else:
-        df0["tarifa"] = pd.to_numeric(df0["tarifa"], errors="coerce")
+    if not en_datos:
+        st.info("Primero cargue un auxiliar (paso 1)."); st.stop()
+    st.caption("Estas son las empresas detectadas en el auxiliar. Ingrese la **tarifa de autorretención (%)** de cada una y guarde. "
+               "La tarifa no está en el código y queda guardada en el maestro para las próximas cargas.")
+    maestro = {e["nombre"]: e for e in db.empresas()}
+    nombres = sorted(set(en_datos) | set(maestro))
+    df0 = pd.DataFrame([{"nombre": n, "en_auxiliar": n in en_datos,
+                         "tarifa": pd.to_numeric(maestro.get(n, {}).get("tarifa"), errors="coerce"),
+                         "activa": maestro.get(n, {}).get("activa", True),
+                         "observaciones": maestro.get(n, {}).get("observaciones", "")} for n in nombres])
+    sin_tarifa = [r.nombre for r in df0.itertuples() if r.en_auxiliar and pd.isna(r.tarifa)]
+    if sin_tarifa:
+        st.warning("Falta la tarifa de: **" + ", ".join(sin_tarifa) + "**.")
     ed = st.data_editor(
-        df0, num_rows="dynamic", hide_index=True, width="stretch", key="maestro",
+        df0, hide_index=True, width="stretch", key=f"maestro_{len(nombres)}", num_rows="fixed",
         column_config={
-            "nombre": st.column_config.TextColumn("Empresa", required=True, help="Igual a la columna `empresa` del auxiliar"),
+            "nombre": st.column_config.TextColumn("Empresa", disabled=True),
+            "en_auxiliar": st.column_config.CheckboxColumn("En el auxiliar", disabled=True),
             "tarifa": st.column_config.NumberColumn("Tarifa de autorretención (%)", min_value=0.0, max_value=100.0, step=0.01, format="%.4f"),
-            "activa": st.column_config.CheckboxColumn("Activa", default=True),
+            "activa": st.column_config.CheckboxColumn("Activa"),
             "observaciones": st.column_config.TextColumn("Observaciones / referencia normativa"),
         })
-    if st.button("Guardar maestro", type="primary"):
-        lista = [dict(nombre=str(r["nombre"]).strip(), tarifa=None if pd.isna(r["tarifa"]) else r["tarifa"],
+    st.markdown("**NIT excluidos del cálculo**")
+    nits_txt = st.text_input("Los movimientos cuyo tercero tenga alguno de estos NIT no entran a la base ni a las retenciones "
+                             "(separe con comas; sin dígito de verificación).",
+                             value=db.get_meta("nits_excluidos", core.NITS_EXCLUIDOS_DEFECTO))
+    if st.button("Guardar y continuar a la liquidación →", type="primary"):
+        lista = [dict(nombre=str(r["nombre"]), tarifa=None if pd.isna(r["tarifa"]) else r["tarifa"],
                       activa=True if pd.isna(r["activa"]) else bool(r["activa"]),
-                      observaciones="" if pd.isna(r["observaciones"]) else r["observaciones"])
-                 for _, r in ed.iterrows() if not pd.isna(r["nombre"]) and str(r["nombre"]).strip()]
-        errs, vistos = [], []
-        for e in lista:
-            errs += core.validar_empresa(e, vistos)
-            vistos.append(e["nombre"])
+                      observaciones="" if pd.isna(r["observaciones"]) else r["observaciones"]) for _, r in ed.iterrows()]
+        errs = [e for x in lista if x["nombre"] in en_datos for e in core.validar_empresa(x)]
         if errs:
             st.error("\n".join(f"- {e}" for e in errs))
         else:
-            db.guardar_empresas(lista); st.success(f"Maestro guardado ({len(lista)} empresa(s))."); st.rerun()
+            db.guardar_empresas(lista)
+            db.set_meta("nits_excluidos", ", ".join(core.parse_nits(nits_txt)))
+            ss["flash"] = []
+            ss["goto"] = STEPS[2]
+            st.rerun()
 
 # =============================================================== 3. LIQUIDACIÓN
-with tab_liq:
+if step == STEPS[2]:
     todos = db.movimientos()
     empresas = sorted({m["empresa"] for m in todos})
     if not empresas:
-        st.info("Cargue un auxiliar en la pestaña 1.")
+        st.info("Cargue un auxiliar en el paso 1.")
         st.stop()
     c1, c2, c3, c4 = st.columns([2, 1.3, 1.3, 1.3])
     empresa = c1.selectbox("Empresa", empresas)
@@ -116,7 +139,9 @@ with tab_liq:
     if hasta < desde:
         st.error("La fecha final es anterior a la inicial."); st.stop()
 
-    movs = core.filtrar(todos, empresa, desde.isoformat(), hasta.isoformat())
+    nits = core.parse_nits(db.get_meta("nits_excluidos", core.NITS_EXCLUIDOS_DEFECTO))
+    movs_todos = core.filtrar(todos, empresa, desde.isoformat(), hasta.isoformat())
+    movs, excluidos = core.separar_excluidos(movs_todos, nits)   # solo `movs` entra al cálculo
     base = core.build_base(movs, invertir)
     tr = core.resolver_tarifa(db.empresas(), empresa)
     retenciones = core.build_retenciones(movs, invertir)
@@ -126,7 +151,7 @@ with tab_liq:
     auto = core.calc_autorretencion(base.base, pct) if ok else None
 
     if not ok:
-        st.error(f"**No se calcula la autorretención.** {tr.msg}" + "\n\nVaya a *2. Maestro de empresas*.")
+        st.error(f"**No se calcula la autorretención.** {tr.msg}" + "\n\nVaya al paso *2. Tarifas por empresa*.")
     k1, k2, k3 = st.columns(3)
     k1.metric("Base de autorretención", fmt(base.base), f"{len(base.cuentas)} cuentas · {base.n_movs} movimientos", delta_color="off")
     k2.metric("Porcentaje aplicado", f"{pct} %" if ok else "—",
@@ -204,6 +229,14 @@ with tab_liq:
     else:
         st.info("No hay movimientos en cuentas 2365 ni 2367 para esta empresa y período.")
 
+    if excluidos:
+        with st.expander(f"Movimientos excluidos del cálculo por NIT ({len(excluidos)}) — {', '.join(nits)}"):
+            st.caption("Estos movimientos no entran a la base de autorretención ni a las retenciones. Se listan para trazabilidad.")
+            st.dataframe(pd.DataFrame([{"Fila": m["fila"], "Id": m["id"], "Fecha": m["fecha"], "Doc.": f"{m['tipodocumento']} {m['nrodocumento']}".strip(),
+                                        "Cuenta": m["codigocuenta"], "Nombre cuenta": m["nombrecuenta"], "NIT": m["identificacion"],
+                                        "Descripción": m["descripcion"], "valor": float(m["valor"])} for m in excluidos]),
+                         hide_index=True, width="stretch")
+
     st.subheader("Cuentas con saldo negativo")
     if base.negativas:
         st.caption("Simulación informativa — no modifica la liquidación.")
@@ -217,11 +250,11 @@ with tab_liq:
         st.caption("Ninguna cuenta de ingresos tiene saldo negativo en el período.")
 
     st.subheader("Controles y validaciones")
-    checks = core.ejecutar_controles(movs, base, tr, len(todos), len({m["key"] for m in todos}), retenciones, auto)
+    checks = core.ejecutar_controles(movs, base, tr, len(todos), len({m["key"] for m in todos}), retenciones, auto, excluidos, nits)
     for c in checks:
         icon = {"ok": "✅", "warn": "⚠️", "error": "❌"}[c["nivel"]]
         st.markdown(f"{icon} **{c['titulo']}** — {c['detalle']}")
 
-    st.download_button("Exportar a Excel", exportar(empresa, desde.isoformat(), hasta.isoformat(), base, tr, checks, retenciones),
+    st.download_button("Exportar a Excel", exportar(empresa, desde.isoformat(), hasta.isoformat(), base, tr, checks, retenciones, excluidos, nits),
                        file_name=f"autorretencion_{empresa}_{desde}_{hasta}.xlsx", type="primary",
                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
