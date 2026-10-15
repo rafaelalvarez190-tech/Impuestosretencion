@@ -163,12 +163,28 @@ def exportar(empresa: str, desde: str, hasta: str, base: Base, tr: ResTarifa, ch
             for c in row:
                 c.font = Font(bold=True)
 
-    pp = [["Código", "Cuenta", "Tipo de persona", "Base", "Retención causada"]]
+    pp = [["Grupo", "Código", "Cuenta", "Tipo de persona", "Base (causación)", "Retención causada",
+           "Reversiones / devoluciones (−)", "Neto"]]
+    por_tipo: dict[str, list] = {}
     for c in ret:
         if c.tipo == "practicada":
-            for per, (b, r) in sorted(c.por_persona.items()):
-                pp.append([c.codigo, c.nombre, per, b, r])
-    _sheet(wb, "Retenciones por tipo persona", pp, [14, 44, 18, 22, 22], "DE")
+            for per, (b, r, d) in sorted(c.por_persona.items()):
+                pp.append([c.grupo, c.codigo, c.nombre, per, b, r, -d, r - d])
+                t = por_tipo.setdefault(per, [Decimal(0)] * 4)
+                por_tipo[per] = [t[0] + b, t[1] + r, t[2] - d, t[3] + r - d]
+    pp.append([])
+    pp.append(["RESUMEN POR TIPO DE PERSONA"])
+    ini_resumen = len(pp)
+    for per, v in sorted(por_tipo.items()):
+        pp.append(["Total", "", "", per, *v])
+    if por_tipo:
+        pp.append(["TOTAL GENERAL", "", "", "", *[sum(v[i] for v in por_tipo.values()) for i in range(4)]])
+    w = _sheet(wb, "Retenciones por tipo persona", pp, [10, 14, 44, 18, 22, 22, 28, 20], "EFGH")
+    w[ini_resumen][0].font = Font(bold=True)
+    for row in w.iter_rows(min_row=ini_resumen + 1):
+        if row[0].value in ("Total", "TOTAL GENERAL"):
+            for cell in row:
+                cell.font = Font(bold=True)
 
     ica = [c for c in ret if c.grupo == "2368"]
     if ica:

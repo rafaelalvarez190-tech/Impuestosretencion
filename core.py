@@ -294,7 +294,7 @@ class CuentaRet:
     debitos: Decimal = Decimal(0)               # cierres, pagos, devoluciones (valor > 0), en magnitud
     base: Decimal = Decimal(0)                  # suma de baseimpuesto de los movimientos de causación
     tarifas: set = field(default_factory=set)
-    por_persona: dict = field(default_factory=dict)   # tipo_persona -> [base, retención]
+    por_persona: dict = field(default_factory=dict)   # tipo_persona -> [base causación, retención causada, devoluciones]
     movs: list[dict] = field(default_factory=list)
     invertir: bool = True
 
@@ -332,11 +332,13 @@ def build_retenciones(movs: Iterable[dict], invertir_signo: bool = True) -> list
         if v < 0:
             c.creditos += -v
             c.base += m.get("baseimpuesto", Decimal(0))
-            p = c.por_persona.setdefault(m.get("tipo_persona") or "Sin clasificar", [Decimal(0), Decimal(0)])
+            p = c.por_persona.setdefault(m.get("tipo_persona") or "Sin clasificar", [Decimal(0), Decimal(0), Decimal(0)])
             p[0] += m.get("baseimpuesto", Decimal(0))
             p[1] += -v
         elif v > 0:
             c.debitos += v
+            p = c.por_persona.setdefault(m.get("tipo_persona") or "Sin clasificar", [Decimal(0), Decimal(0), Decimal(0)])
+            p[2] += v
         if m.get("porcentajeimpuesto"):
             c.tarifas.add(m["porcentajeimpuesto"].normalize())
     return sorted(acc.values(), key=lambda c: c.codigo)

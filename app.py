@@ -214,11 +214,12 @@ if step == STEPS[2]:
         st.dataframe(dfr.style.format({k: "{:,.2f}" for k in ["Base", "Retención causada", "Débitos (−)", "Neto"]}, na_rep="")
                      .apply(lambda r: ["font-weight:700; background-color:#eef2f7; color:#1c2430" if str(r["Código"]) in ("SUBTOTAL", "TOTAL") else "" for _ in r], axis=1),
                      hide_index=True, width="stretch")
-        pers = [{"Código": c.codigo, "Cuenta": c.nombre, "Tipo de persona": per, "Base": float(b), "Retención causada": float(r)}
-                for c in retenciones if c.tipo == "practicada" for per, (b, r) in sorted(c.por_persona.items())]
+        pers = [{"Código": c.codigo, "Cuenta": c.nombre, "Tipo de persona": per, "Base": float(b), "Retención causada": float(r),
+                 "Reversiones (−)": -float(d), "Neto": float(r - d)}
+                for c in retenciones if c.tipo == "practicada" for per, (b, r, d) in sorted(c.por_persona.items())]
         if pers:
             with st.expander("Retenciones practicadas por tipo de persona (jurídica / natural)"):
-                st.dataframe(pd.DataFrame(pers).style.format({"Base": "{:,.2f}", "Retención causada": "{:,.2f}"}), hide_index=True, width="stretch")
+                st.dataframe(pd.DataFrame(pers).style.format({k: "{:,.2f}" for k in ["Base", "Retención causada", "Reversiones (−)", "Neto"]}), hide_index=True, width="stretch")
         for c in retenciones:
             with st.expander(f"{c.codigo} · {c.nombre} — {c.n} movimientos"):
                 st.dataframe(pd.DataFrame([{"Fila": m["fila"], "Id": m["id"], "Fecha": m["fecha"],
