@@ -201,17 +201,17 @@ if step == STEPS[2]:
             for c in cs:
                 filas.append({"Grupo": g, "Código": c.codigo, "Cuenta": c.nombre, "Tipo": TIPO[c.tipo],
                               "Tarifa %": ", ".join(f"{t:f}" for t in sorted(c.tarifas)), "Base": float(c.base),
-                              "Retención causada": float(c.creditos), "Débitos": float(c.debitos), "Neto": float(c.neto), "Mov.": c.n})
+                              "Retención causada": float(c.creditos), "Débitos (−)": -float(c.debitos), "Neto": float(c.creditos - c.debitos), "Mov.": c.n})
             t = tot_ret[g]
             filas.append({"Grupo": g, "Código": "SUBTOTAL", "Cuenta": f"{nombre} (practicadas)", "Tipo": "", "Tarifa %": "",
-                          "Base": float(t["base"]), "Retención causada": float(t["creditos"]), "Débitos": float(t["debitos"]),
-                          "Neto": float(t["neto"]), "Mov.": None})
+                          "Base": float(t["base"]), "Retención causada": float(t["creditos"]), "Débitos (−)": -float(t["debitos"]),
+                          "Neto": float(t["creditos"] - t["debitos"]), "Mov.": None})
         t = tot_ret["total"]
-        filas.append({"Grupo": "", "Código": "TOTAL", "Cuenta": "Total retenciones practicadas", "Tipo": "", "Tarifa %": "",
-                      "Base": float(t["base"]), "Retención causada": float(t["creditos"]), "Débitos": float(t["debitos"]),
-                      "Neto": float(t["neto"]), "Mov.": None})
+        filas.append({"Grupo": "", "Código": "TOTAL", "Cuenta": "Total retenciones practicadas (neto)", "Tipo": "", "Tarifa %": "",
+                      "Base": float(t["base"]), "Retención causada": float(t["creditos"]), "Débitos (−)": -float(t["debitos"]),
+                      "Neto": float(t["creditos"] - t["debitos"]), "Mov.": None})
         dfr = pd.DataFrame(filas)
-        st.dataframe(dfr.style.format({k: "{:,.2f}" for k in ["Base", "Retención causada", "Débitos", "Neto"]}, na_rep="")
+        st.dataframe(dfr.style.format({k: "{:,.2f}" for k in ["Base", "Retención causada", "Débitos (−)", "Neto"]}, na_rep="")
                      .apply(lambda r: ["font-weight:700; background-color:#eef2f7; color:#1c2430" if str(r["Código"]) in ("SUBTOTAL", "TOTAL") else "" for _ in r], axis=1),
                      hide_index=True, width="stretch")
         pers = [{"Código": c.codigo, "Cuenta": c.nombre, "Tipo de persona": per, "Base": float(b), "Retención causada": float(r)}
