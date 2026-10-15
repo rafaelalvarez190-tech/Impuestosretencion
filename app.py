@@ -12,7 +12,7 @@ from excel import exportar
 
 st.set_page_config(page_title="Retencion y/o autorretención sobre ingresos", page_icon="%", layout="wide")
 
-st.title("Autorretención sobre ingresos")
+st.title("Retencion y/o autorretención sobre ingresos")
 st.caption("Cuentas contables clase 4 · base = suma neta de la columna `valor` del auxiliar")
 st.warning("Liquidación **preliminar sujeta a revisión**. La parametrización de la tarifa no sustituye la validación "
            "de las reglas tributarias aplicables a la empresa y al período.")
