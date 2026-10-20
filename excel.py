@@ -7,7 +7,7 @@ from decimal import Decimal
 from openpyxl import Workbook
 from openpyxl.styles import Font
 
-from core import Base, CuentaRet, ResTarifa, calc_autorretencion, totales_retenciones, GRUPOS_RETENCION
+from core import TIPOS_DOC_EXCLUIDOS, motivo_exclusion, Base, CuentaRet, ResTarifa, calc_autorretencion, totales_retenciones, GRUPOS_RETENCION
 
 NUM = "#,##0.00"
 TIPO = {"practicada": "Retención practicada", "autorretencion": "Autorretención contabilizada", "pago": "Pago / cierre"}
@@ -125,7 +125,7 @@ def exportar(empresa: str, desde: str, hasta: str, base: Base, tr: ResTarifa, ch
         ["2368 Retención de ICA — devoluciones / reversiones (−)", -_f(tot["2368"]["debitos"])],
         ["Total retenciones practicadas (neto de devoluciones)", _f(tot["total"]["creditos"] - tot["total"]["debitos"])],
         ["NIT excluidos del cálculo", ", ".join(nits or []) or "Ninguno"],
-        ["Movimientos excluidos por NIT", len(exc)], [],
+        ["Movimientos excluidos (NIT y tipo de documento " + ", ".join(TIPOS_DOC_EXCLUIDOS) + ")", len(exc)], [],
         ["La parametrización de la tarifa no sustituye la validación de las reglas tributarias aplicables a la empresa y al período."],
     ]
     for f in filas:
@@ -206,10 +206,10 @@ def exportar(empresa: str, desde: str, hasta: str, base: Base, tr: ResTarifa, ch
     _sheet(wb, "Mov. ingresos", mv, [12, 30, 10, 10, 12, 8, 10, 14, 30, 40, 20, 18], "L")
 
     ex = [["Cuenta", "Nombre cuenta", "Fila archivo", "Id auxiliar", "Fecha", "Tipo doc.", "Nro doc.", "Identificación", "Tercero",
-           "Descripción", "valor"]]
+           "Descripción", "valor", "Motivo de exclusión"]]
     ex += [[m["codigocuenta"], m["nombrecuenta"], m["fila"], m["id"], m["fecha"], m["tipodocumento"], m["nrodocumento"],
-            m["identificacion"], m["tercero"], m["descripcion"], m["valor"]] for m in exc]
-    _sheet(wb, "Excluidos por NIT", ex, [12, 40, 10, 10, 12, 8, 10, 14, 24, 60, 18], "K")
+            m["identificacion"], m["tercero"], m["descripcion"], m["valor"], motivo_exclusion(m, nits or [])] for m in exc]
+    _sheet(wb, "Excluidos (NIT y CDI)", ex, [12, 40, 10, 10, 12, 8, 10, 14, 24, 60, 18, 28], "K")
 
     ng = [["Código", "Cuenta", "Valor neto"]] + [[c.codigo, c.nombre, c.valor] for c in base.negativas]
     ng += [[], ["Efecto de las negativas en la base", "", base.efecto_negativas], ["Base sin cuentas negativas", "", base.base_sin_negativas]]

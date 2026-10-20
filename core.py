@@ -156,11 +156,23 @@ def nit_excluido(identificacion: Any, nits: list[str]) -> bool:
     return bool(d) and any(d == n or (len(d) == len(n) + 1 and d.startswith(n)) for n in nits)
 
 
+TIPOS_DOC_EXCLUIDOS = ("CDI",)
+
+
+def motivo_exclusion(m: dict, nits: list[str]) -> str:
+    """'' si el movimiento entra al cálculo; si no, el motivo (NIT excluido o tipo de documento excluido)."""
+    if str(m.get("tipodocumento") or "").strip().upper() in TIPOS_DOC_EXCLUIDOS:
+        return "Tipo de documento " + str(m["tipodocumento"]).strip().upper()
+    if nit_excluido(m.get("identificacion"), nits):
+        return "NIT excluido"
+    return ""
+
+
 def separar_excluidos(movs: Iterable[dict], nits: list[str]) -> tuple[list[dict], list[dict]]:
-    """(incluidos, excluidos): los movimientos cuyo tercero tenga un NIT excluido no entran a ningún cálculo."""
+    """(incluidos, excluidos): no entran a ningún cálculo los movimientos con NIT excluido ni los de tipo de documento CDI."""
     inc, exc = [], []
     for m in movs:
-        (exc if nit_excluido(m.get("identificacion"), nits) else inc).append(m)
+        (exc if motivo_exclusion(m, nits) else inc).append(m)
     return inc, exc
 
 
@@ -390,9 +402,9 @@ def ejecutar_controles(movs_periodo: list[dict], base: Base, tr: ResTarifa, tota
     add("Base rastreable hasta los movimientos originales", True,
         "Cada cuenta enlaza a sus movimientos (fila del archivo e id del auxiliar).")
     exc = excluidos or []
-    add("Movimientos de NIT excluidos fuera del cálculo", True,
-        (f"{len(exc)} movimiento(s) con NIT {', '.join(nits or [])} excluidos de la base y de las retenciones (ver detalle)."
-         if exc else f"Sin movimientos con NIT excluido ({', '.join(nits or []) or 'ninguno configurado'})."))
+    add("Movimientos excluidos (NIT y tipo de documento CDI) fuera del cálculo", True,
+        (f"{len(exc)} movimiento(s) excluidos (NIT {', '.join(nits or [])} o tipo de documento {', '.join(TIPOS_DOC_EXCLUIDOS)}) de la base y de las retenciones (ver detalle)."
+         if exc else f"Sin movimientos excluidos (NIT: {', '.join(nits or []) or 'ninguno configurado'})."))
     ret = retenciones or []
     add("Retenciones 2365 / 2368 incluidas en el informe", bool(ret),
         f"{len(ret)} cuenta(s) de retención en el período." if ret else
@@ -634,7 +646,7 @@ def ejecutar_controles_iva(movs_periodo: list[dict], ingresos: Base, iva: list[C
     add("Sin movimientos duplicados", total_movs == claves_unicas,
         f"{total_movs} movimiento(s) únicos almacenados (clave: empresa + id del auxiliar).")
     exc = excluidos or []
-    add("Movimientos de NIT excluidos fuera del cálculo", True,
-        (f"{len(exc)} movimiento(s) con NIT {', '.join(nits or [])} excluidos (ver detalle)." if exc
-         else f"Sin movimientos con NIT excluido ({', '.join(nits or []) or 'ninguno configurado'})."))
+    add("Movimientos excluidos (NIT y tipo de documento CDI) fuera del cálculo", True,
+        (f"{len(exc)} movimiento(s) excluidos (NIT {', '.join(nits or [])} o tipo de documento {', '.join(TIPOS_DOC_EXCLUIDOS)}) (ver detalle)." if exc
+         else f"Sin movimientos excluidos (NIT: {', '.join(nits or []) or 'ninguno configurado'})."))
     return out

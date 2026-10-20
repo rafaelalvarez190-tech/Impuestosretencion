@@ -7,7 +7,7 @@ from decimal import Decimal
 from openpyxl import Workbook
 from openpyxl.styles import Font
 
-from core import TIPOS_IVA, NATURALEZA_DEBITO, Base, CuentaIVA, CuentaRetIVA, iva_por_tarifa, liquidar_iva, totales_iva, totales_reteiva
+from core import TIPOS_DOC_EXCLUIDOS, motivo_exclusion, TIPOS_IVA, NATURALEZA_DEBITO, Base, CuentaIVA, CuentaRetIVA, iva_por_tarifa, liquidar_iva, totales_iva, totales_reteiva
 from excel import NUM, _f, _sheet
 
 TIPO = TIPOS_IVA
@@ -37,7 +37,7 @@ def exportar_iva(empresa: str, desde: str, hasta: str, ingresos: Base, iva: list
         ["IMPUESTO SOBRE LAS VENTAS (IVA) — liquidación preliminar sujeta a revisión"], [],
         ["Empresa", empresa], ["Período", f"{desde} a {hasta}"],
         ["Signo de presentación", "Invertido (ingresos e IVA generado positivos)" if inv else "Tal cual el auxiliar"],
-        ["NIT excluidos del cálculo", ", ".join(nits or []) or "Ninguno"], ["Movimientos excluidos por NIT", len(exc)], [],
+        ["NIT excluidos del cálculo", ", ".join(nits or []) or "Ninguno"], ["Movimientos excluidos (NIT y tipo de documento " + ", ".join(TIPOS_DOC_EXCLUIDOS) + ")", len(exc)], [],
         ["Total ingresos (cuentas clase 4, neto)", _f(ingresos.base)],
         ["IVA generado (2408)", _f(liq["generado"])],
         ["(−) Devoluciones en ventas (2408)", _f(liq["dev_ventas"])],
@@ -117,10 +117,10 @@ def exportar_iva(empresa: str, desde: str, hasta: str, ingresos: Base, iva: list
     _sheet(wb, "Mov. ingresos", mv, [12, 30, 10, 10, 12, 8, 10, 14, 30, 40, 20, 18], "L")
 
     ex = [["Cuenta", "Nombre cuenta", "Fila archivo", "Id auxiliar", "Fecha", "Tipo doc.", "Nro doc.", "Identificación", "Tercero",
-           "Descripción", "valor"]]
+           "Descripción", "valor", "Motivo de exclusión"]]
     ex += [[m["codigocuenta"], m["nombrecuenta"], m["fila"], m["id"], m["fecha"], m["tipodocumento"], m["nrodocumento"],
-            m["identificacion"], m["tercero"], m["descripcion"], m["valor"]] for m in exc]
-    _sheet(wb, "Excluidos por NIT", ex, [12, 40, 10, 10, 12, 8, 10, 14, 24, 60, 18], "K")
+            m["identificacion"], m["tercero"], m["descripcion"], m["valor"], motivo_exclusion(m, nits or [])] for m in exc]
+    _sheet(wb, "Excluidos (NIT y CDI)", ex, [12, 40, 10, 10, 12, 8, 10, 14, 24, 60, 18, 28], "K")
 
     vl = [["Control", "Resultado", "Detalle"]] + [[c["titulo"], "OK" if c["ok"] else ("Revisar" if c["nivel"] == "warn" else "Falla"), c["detalle"]] for c in checks]
     _sheet(wb, "Validaciones", vl, [56, 10, 100])

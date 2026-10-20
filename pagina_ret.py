@@ -226,10 +226,10 @@ def render() -> None:
             st.info("No hay movimientos en cuentas 2365 ni 2368 para esta empresa y período.")
 
         if excluidos:
-            with st.expander(f"Movimientos excluidos del cálculo por NIT ({len(excluidos)}) — {', '.join(nits)}"):
+            with st.expander(f"Movimientos excluidos del cálculo ({len(excluidos)}) — NIT {', '.join(nits)} y tipo de documento CDI"):
                 st.caption("Estos movimientos no entran a la base de autorretención ni a las retenciones. Se listan para trazabilidad.")
                 st.dataframe(pd.DataFrame([{"Fila": m["fila"], "Id": m["id"], "Fecha": m["fecha"], "Doc.": f"{m['tipodocumento']} {m['nrodocumento']}".strip(),
-                                            "Cuenta": m["codigocuenta"], "Nombre cuenta": m["nombrecuenta"], "NIT": m["identificacion"],
+                                            "Cuenta": m["codigocuenta"], "Nombre cuenta": m["nombrecuenta"], "NIT": m["identificacion"], "Motivo": core.motivo_exclusion(m, nits),
                                             "Descripción": m["descripcion"], "valor": float(m["valor"])} for m in excluidos]),
                              hide_index=True, width="stretch")
 

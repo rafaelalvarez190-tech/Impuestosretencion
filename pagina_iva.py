@@ -68,10 +68,9 @@ def render() -> None:
                          hide_index=True, width="stretch")
             if st.button("Continuar a la liquidación de IVA →", key="iva_cont"):
                 ss["iva_goto"] = STEPS[1]; st.rerun()
-            with st.expander("Borrar los movimientos de IVA"):
-                if st.checkbox("Confirmo que quiero borrar todos los movimientos de este módulo", key="iva_conf_borrar") \
-                        and st.button("Borrar", key="iva_borrar"):
-                    db.borrar_movimientos(M); st.rerun()
+            if st.button("🗑️ Limpiar datos", key="iva_limpiar", help="Borra todos los movimientos de IVA cargados"):
+                db.borrar_movimientos(M)
+                st.rerun()
         else:
             st.info("Aún no hay movimientos de IVA cargados.")
         return
@@ -119,10 +118,16 @@ def render() -> None:
 
     k1, k2, k3, k4, k5 = st.columns(5)
     k1.metric("Total ingresos (clase 4, neto)", fmt(ingresos.base), f"{len(ingresos.cuentas)} cuentas", delta_color="off")
-    k2.metric("IVA generado neto", fmt(liq["generado_neto"]), "generado − devoluciones en ventas", delta_color="off")
-    k3.metric("IVA descontable neto (−)", fmt(liq["descontable_neto"]), "descontable − devoluciones en compras", delta_color="off")
-    k4.metric("IVA retenido (135517) (−)", fmt(liq["retenido"]), "retenciones que le aplican", delta_color="off")
-    k5.metric("IVA por pagar", fmt(liq["por_pagar"]), "generado − descontable − retenido", delta_color="off")
+    k2.metric("IVA generado", fmt(liq["generado"]), "cuentas 2408 generado", delta_color="off")
+    k3.metric("(−) Devoluciones en ventas", fmt(liq["dev_ventas"]), "reducen el IVA generado", delta_color="off")
+    k4.metric("(−) IVA descontable", fmt(liq["descontable"]), "cuentas 2408 descontable", delta_color="off")
+    k5.metric("(+) Devoluciones en compras", fmt(liq["dev_compras"]), "reducen el descontable", delta_color="off")
+    j1, j2, j3, j4, j5 = st.columns(5)
+    j1.metric("IVA generado neto", fmt(liq["generado_neto"]), "generado − dev. ventas", delta_color="off")
+    j2.metric("IVA descontable neto (−)", fmt(liq["descontable_neto"]), "descontable − dev. compras", delta_color="off")
+    j3.metric("(−) IVA retenido (135517)", fmt(liq["retenido"]), "retenciones que le aplican", delta_color="off")
+    j4.metric("IVA neto 2408", fmt(liq["neto_2408"]), "antes de retenciones", delta_color="off")
+    j5.metric("IVA POR PAGAR", fmt(liq["por_pagar"]), "neto 2408 − retenido", delta_color="off")
     st.caption(f"**Empresa:** {empresa} · **Período:** {desde} a {hasta} · Liquidación preliminar sujeta a revisión.")
 
     # ---- clase 4
@@ -231,9 +236,9 @@ def render() -> None:
         st.caption("Con el signo del auxiliar: el IVA generado es crédito (negativo) y el IVA por pagar sale negativo (pasivo).")
 
     if excluidos:
-        with st.expander(f"Movimientos excluidos del cálculo por NIT ({len(excluidos)}) — {', '.join(nits)}"):
+        with st.expander(f"Movimientos excluidos del cálculo ({len(excluidos)}) — NIT {', '.join(nits)} y tipo de documento CDI"):
             st.dataframe(pd.DataFrame([{"Fila": m["fila"], "Id": m["id"], "Fecha": m["fecha"], "Cuenta": m["codigocuenta"],
-                                        "Nombre cuenta": m["nombrecuenta"], "NIT": m["identificacion"],
+                                        "Nombre cuenta": m["nombrecuenta"], "NIT": m["identificacion"], "Motivo": core.motivo_exclusion(m, nits),
                                         "Descripción": m["descripcion"], "valor": float(m["valor"])} for m in excluidos]),
                          hide_index=True, width="stretch")
 
